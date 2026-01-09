@@ -1,0 +1,35 @@
+[Unit]
+Description=OpenCode AI Coding Agent Server
+Documentation=https://github.com/anomalyco/opencode
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zcy
+Group=zcy
+WorkingDirectory=/home/zcy/workspace
+
+# OpenCode serve command
+ExecStart=/usr/bin/opencode serve --hostname 127.0.0.1 --port 4096
+
+# Restart policy
+Restart=always
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=opencode
+
+# Environment
+Environment=HOME=/home/zcy
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

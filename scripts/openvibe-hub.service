@@ -1,0 +1,34 @@
+[Unit]
+Description=OpenVibe Hub WebSocket Relay Server
+Documentation=https://github.com/openvibe/hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zcy
+Group=zcy
+WorkingDirectory=/home/zcy/openvibe
+
+# Hub server command
+ExecStart=/home/zcy/openvibe/openvibe-hub --port 8080 --opencode http://localhost:4096
+
+# Restart policy
+Restart=always
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openvibe-hub
+
+# Environment - set your token here
+Environment=OPENVIBE_TOKEN=your-secure-token-here
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
