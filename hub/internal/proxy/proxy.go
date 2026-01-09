@@ -128,6 +128,15 @@ func (p *OpenCodeProxy) CreateSession(ctx context.Context, title string) (*Sessi
 	return &session, nil
 }
 
+// OpenCodeResponse represents the full response from OpenCode
+type OpenCodeResponse struct {
+	Info  json.RawMessage `json:"info"`
+	Parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	} `json:"parts"`
+}
+
 // SendMessage sends a message and streams the response
 func (p *OpenCodeProxy) SendMessage(ctx context.Context, sessionID string, content string, callback StreamCallback) error {
 	promptReq := PromptRequest{
@@ -157,18 +166,17 @@ func (p *OpenCodeProxy) SendMessage(ctx context.Context, sessionID string, conte
 		return fmt.Errorf("opencode error: status %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// Read streaming JSON response
-	decoder := json.NewDecoder(resp.Body)
-	for {
-		var msg json.RawMessage
-		if err := decoder.Decode(&msg); err != nil {
-			if err == io.EOF {
-				break
+	var ocResp OpenCodeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ocResp); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	for _, part := range ocResp.Parts {
+		if part.Type == "text" && part.Text != "" {
+			textPayload, _ := json.Marshal(map[string]string{"text": part.Text})
+			if err := callback("message", textPayload); err != nil {
+				return err
 			}
-			return err
-		}
-		if err := callback("message", msg); err != nil {
-			return err
 		}
 	}
 

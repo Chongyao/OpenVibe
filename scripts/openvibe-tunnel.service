@@ -1,30 +1,25 @@
 [Unit]
 Description=OpenVibe SSH Tunnel to Huawei Cloud
 Documentation=https://github.com/openvibe
-After=network-online.target opencode.service
+After=network-online.target
 Wants=network-online.target
-Requires=opencode.service
 
 [Service]
 Type=simple
 User=zcy
 Group=acy2
+Environment="AUTOSSH_GATETIME=0"
 
-# SSH reverse tunnel command
-# -N: No remote command
-# -R: Remote port forwarding (Huawei:4096 -> Arch:4096)
-ExecStart=/usr/bin/ssh -N -R 4096:localhost:4096 huawei \
-    -o ServerAliveInterval=30 \
+ExecStart=/usr/bin/autossh -M 0 -N -R 4096:localhost:4096 huawei \
+    -o ServerAliveInterval=15 \
     -o ServerAliveCountMax=3 \
-    -o ExitOnForwardFailure=yes \
     -o StrictHostKeyChecking=no \
-    -o BatchMode=yes
+    -o BatchMode=yes \
+    -o ExitOnForwardFailure=no
 
-# Restart on failure
 Restart=always
-RestartSec=10s
+RestartSec=5s
 
-# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openvibe-tunnel
