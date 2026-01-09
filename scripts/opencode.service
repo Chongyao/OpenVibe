@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=zcy
-Group=zcy
+Group=acy2
 WorkingDirectory=/home/zcy/workspace
 
 # OpenCode serve command

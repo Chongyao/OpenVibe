@@ -25,7 +25,8 @@ StandardError=journal
 SyslogIdentifier=openvibe-hub
 
 # Environment - set your token here
-Environment=OPENVIBE_TOKEN=your-secure-token-here
+# Token disabled for MVP - uncomment to enable authentication
+# Environment=OPENVIBE_TOKEN=your-secure-token-here
 
 # Resource limits
 LimitNOFILE=65536

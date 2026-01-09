@@ -8,7 +8,7 @@ Requires=opencode.service
 [Service]
 Type=simple
 User=zcy
-Group=zcy
+Group=acy2
 
 # SSH reverse tunnel command
 # -N: No remote command
