@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -15,19 +16,16 @@ import (
 )
 
 func main() {
-	// Parse command line flags
 	port := flag.String("port", "8080", "Port to listen on")
 	opencodeURL := flag.String("opencode", "http://localhost:4096", "OpenCode server URL")
 	token := flag.String("token", "", "Authentication token (or use OPENVIBE_TOKEN env)")
 	staticDir := flag.String("static", "", "Static files directory (Next.js out)")
 	flag.Parse()
 
-	// Load configuration
 	cfg := config.New()
 	cfg.Port = *port
 	cfg.OpenCodeURL = *opencodeURL
 
-	// Token from flag or environment
 	if *token != "" {
 		cfg.Token = *token
 	} else if envToken := os.Getenv("OPENVIBE_TOKEN"); envToken != "" {
@@ -38,13 +36,9 @@ func main() {
 		log.Println("WARNING: No authentication token set. Use --token or OPENVIBE_TOKEN env var.")
 	}
 
-	// Create OpenCode proxy
 	opencodeProxy := proxy.NewOpenCodeProxy(cfg.OpenCodeURL)
-
-	// Create WebSocket server
 	wsServer := server.NewServer(cfg, opencodeProxy)
 
-	// Setup HTTP routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", wsServer.HandleWebSocket)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -52,27 +46,38 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Serve static files if directory is specified
 	if *staticDir != "" {
 		log.Printf("Serving static files from: %s", *staticDir)
-		fs := http.FileServer(http.Dir(*staticDir))
+		staticRoot, err := filepath.Abs(*staticDir)
+		if err != nil {
+			log.Fatalf("Invalid static directory: %v", err)
+		}
+
+		fs := http.FileServer(http.Dir(staticRoot))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			// Don't serve static for API routes
 			if strings.HasPrefix(r.URL.Path, "/ws") || strings.HasPrefix(r.URL.Path, "/health") {
 				return
 			}
 
-			// Try to serve the file
-			path := r.URL.Path
-			if path == "/" {
-				path = "/index.html"
+			requestPath := filepath.Clean(r.URL.Path)
+			if strings.HasPrefix(requestPath, "..") {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
 			}
 
-			// Check if file exists, if not serve index.html (SPA fallback)
-			fullPath := *staticDir + path
-			if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-				// SPA fallback: serve index.html for client-side routing
-				http.ServeFile(w, r, *staticDir+"/index.html")
+			if requestPath == "/" || requestPath == "." {
+				requestPath = "/index.html"
+			}
+
+			fullPath := filepath.Join(staticRoot, requestPath)
+			resolvedPath, err := filepath.Abs(fullPath)
+			if err != nil || !strings.HasPrefix(resolvedPath, staticRoot) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+
+			if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
+				http.ServeFile(w, r, filepath.Join(staticRoot, "index.html"))
 				return
 			}
 
@@ -80,7 +85,6 @@ func main() {
 		})
 	}
 
-	// Start server
 	addr := "0.0.0.0:" + cfg.Port
 	log.Printf("OpenVibe Hub starting on %s", addr)
 	log.Printf("OpenCode backend: %s", cfg.OpenCodeURL)
@@ -93,7 +97,6 @@ func main() {
 		Handler: mux,
 	}
 
-	// Graceful shutdown
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

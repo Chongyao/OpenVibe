@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
@@ -17,18 +19,20 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 1024 * 1024 // 1MB
+	maxMessageSize = 1024 * 1024
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now
-	},
-}
+var (
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
+	sessionIDPattern = regexp.MustCompile(`^ses_[a-zA-Z0-9]+$`)
+)
 
-// Server handles WebSocket connections
 type Server struct {
 	config  *config.Config
 	proxy   *proxy.OpenCodeProxy
@@ -36,7 +40,6 @@ type Server struct {
 	mu      sync.RWMutex
 }
 
-// Client represents a connected WebSocket client
 type Client struct {
 	server    *Server
 	conn      *websocket.Conn
@@ -44,33 +47,28 @@ type Client struct {
 	sessionID string
 }
 
-// ClientMessage represents incoming WebSocket message
 type ClientMessage struct {
 	Type    string          `json:"type"`
 	ID      string          `json:"id"`
 	Payload json.RawMessage `json:"payload"`
 }
 
-// PromptPayload represents prompt message payload
 type PromptPayload struct {
 	SessionID string `json:"sessionId"`
 	Content   string `json:"content"`
 }
 
-// SessionPayload represents session-related payload
 type SessionPayload struct {
 	SessionID string `json:"sessionId,omitempty"`
 	Title     string `json:"title,omitempty"`
 }
 
-// ServerMessage represents outgoing WebSocket message
 type ServerMessage struct {
 	Type    string      `json:"type"`
 	ID      string      `json:"id,omitempty"`
 	Payload interface{} `json:"payload"`
 }
 
-// NewServer creates a new WebSocket server
 func NewServer(cfg *config.Config, p *proxy.OpenCodeProxy) *Server {
 	return &Server{
 		config:  cfg,
@@ -79,12 +77,10 @@ func NewServer(cfg *config.Config, p *proxy.OpenCodeProxy) *Server {
 	}
 }
 
-// HandleWebSocket handles WebSocket upgrade and connection
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Token authentication
 	if s.config.Token != "" {
 		token := r.URL.Query().Get("token")
-		if token != s.config.Token {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.config.Token)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -108,7 +104,6 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Client connected: %s", conn.RemoteAddr())
 
-	// Start read and write pumps
 	go client.writePump()
 	go client.readPump()
 }
@@ -187,12 +182,18 @@ func (c *Client) handleMessage(data []byte) {
 
 	case "session.create":
 		var payload SessionPayload
-		json.Unmarshal(msg.Payload, &payload)
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			c.sendError(msg.ID, "Invalid payload format")
+			return
+		}
 		c.handleSessionCreate(msg.ID, payload.Title)
 
 	case "prompt":
 		var payload PromptPayload
-		json.Unmarshal(msg.Payload, &payload)
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			c.sendError(msg.ID, "Invalid payload format")
+			return
+		}
 		c.handlePrompt(msg.ID, payload)
 
 	default:
@@ -245,9 +246,13 @@ func (c *Client) handlePrompt(requestID string, payload PromptPayload) {
 		return
 	}
 
-	ctx := context.Background() // No timeout for streaming
+	if !sessionIDPattern.MatchString(sessionID) {
+		c.sendError(requestID, "Invalid session ID format")
+		return
+	}
 
-	// Stream response back to client
+	ctx := context.Background()
+
 	err := c.server.proxy.SendMessage(ctx, sessionID, payload.Content, func(eventType string, data []byte) error {
 		c.sendMessage(ServerMessage{
 			Type:    "stream",
@@ -262,7 +267,6 @@ func (c *Client) handlePrompt(requestID string, payload PromptPayload) {
 		return
 	}
 
-	// Send completion
 	c.sendMessage(ServerMessage{
 		Type:    "stream.end",
 		ID:      requestID,

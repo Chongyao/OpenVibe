@@ -12,7 +12,10 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL ||
     : 'ws://localhost:8080/ws');
 
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 export default function Home() {
