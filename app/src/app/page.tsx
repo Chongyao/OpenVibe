@@ -11,6 +11,13 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL ||
     ? `ws://${window.location.host}/ws`
     : 'ws://localhost:8080/ws');
 
+// Debug logging
+if (typeof window !== 'undefined') {
+  console.log('[OpenVibe] WS_URL:', WS_URL);
+  console.log('[OpenVibe] window.location:', window.location.href);
+  console.log('[OpenVibe] hostname:', window.location.hostname);
+}
+
 function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -186,12 +193,20 @@ export default function Home() {
     }
   }, [currentSessionId, isCreatingSession, updateSessionMessages]);
 
+  const isCreatingSessionRef = useRef(false);
+
   const { state, send } = useWebSocket({
     url: WS_URL,
     onMessage: handleMessage,
     onConnect: () => {
-      if (sessions.length === 0 && !currentSessionId) {
-        handleNewSession();
+      if (sessions.length === 0 && !currentSessionId && !isCreatingSessionRef.current) {
+        isCreatingSessionRef.current = true;
+        setIsCreatingSession(true);
+        send({
+          type: 'session.create',
+          id: generateId(),
+          payload: { title: 'New Chat' },
+        });
       }
     },
   });
@@ -199,6 +214,10 @@ export default function Home() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    isCreatingSessionRef.current = isCreatingSession;
+  }, [isCreatingSession]);
 
   const handleNewSession = useCallback(() => {
     if (state !== 'connected' || isCreatingSession) return;

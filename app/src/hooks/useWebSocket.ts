@@ -56,6 +56,7 @@ export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnec
   // Main connection effect
   useEffect(() => {
     mountedRef.current = true;
+    console.log('[WS] Effect triggered, url:', url, 'reconnectTrigger:', reconnectTrigger);
 
     // Clear any existing timer
     if (reconnectTimerRef.current) {
@@ -65,14 +66,17 @@ export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnec
 
     // Don't connect if already connected
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('[WS] Already connected, skipping');
       return;
     }
 
     let ws: WebSocket;
     try {
+      console.log('[WS] Creating WebSocket to:', url);
       ws = new WebSocket(url);
+      console.log('[WS] WebSocket created, readyState:', ws.readyState);
     } catch (e) {
-      console.error('Failed to create WebSocket:', e);
+      console.error('[WS] Failed to create WebSocket:', e);
       // Use microtask to avoid synchronous setState warning
       queueMicrotask(() => {
         if (mountedRef.current) {
@@ -85,15 +89,18 @@ export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnec
     // Set connecting state via microtask
     queueMicrotask(() => {
       if (mountedRef.current) {
+        console.log('[WS] Setting state to connecting');
         setConnectionState('connecting');
       }
     });
 
     ws.onopen = () => {
+      console.log('[WS] onopen fired, mounted:', mountedRef.current);
       if (!mountedRef.current) {
         ws.close();
         return;
       }
+      console.log('[WS] Connected successfully!');
       setConnectionState('connected');
       reconnectAttemptRef.current = 0;
 
@@ -105,7 +112,8 @@ export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnec
       callbacksRef.current.onConnect?.();
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log('[WS] onclose fired, code:', event.code, 'reason:', event.reason, 'wasClean:', event.wasClean);
       if (!mountedRef.current) return;
 
       setConnectionState('disconnected');
@@ -114,6 +122,7 @@ export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnec
 
       // Schedule reconnect
       const delay = RECONNECT_DELAYS[Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS.length - 1)];
+      console.log('[WS] Scheduling reconnect in', delay, 'ms, attempt:', reconnectAttemptRef.current);
       reconnectTimerRef.current = setTimeout(() => {
         if (mountedRef.current) {
           reconnectAttemptRef.current++;
@@ -123,13 +132,15 @@ export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnec
       }, delay);
     };
 
-    ws.onerror = () => {
+    ws.onerror = (event) => {
+      console.error('[WS] onerror fired:', event);
       if (!mountedRef.current) return;
       setConnectionState('error');
     };
 
     ws.onmessage = (event) => {
       if (!mountedRef.current) return;
+      console.log('[WS] Message received:', event.data.substring(0, 200));
 
       try {
         const msg: ServerMessage = JSON.parse(event.data);

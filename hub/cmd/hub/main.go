@@ -153,8 +153,15 @@ func main() {
 			}
 
 			if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 				http.ServeFile(w, r, filepath.Join(staticRoot, "index.html"))
 				return
+			}
+
+			if strings.HasSuffix(requestPath, ".html") || requestPath == "/index.html" {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			} else if strings.Contains(requestPath, "/_next/static/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 
 			fs.ServeHTTP(w, r)
