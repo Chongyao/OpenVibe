@@ -12,10 +12,12 @@ export interface Session {
   title: string;
   createdAt: number;
   messages: Message[];
+  directory?: string;
+  time?: { created: number; updated: number };
 }
 
 export interface ClientMessage {
-  type: 'ping' | 'session.create' | 'session.list' | 'prompt' | 'sync' | 'ack' | 'project.list' | 'project.select' | 'project.stop' | 'project.status';
+  type: 'ping' | 'session.create' | 'session.list' | 'prompt' | 'sync' | 'ack';
   id: string;
   payload: {
     sessionId?: string;
@@ -23,7 +25,6 @@ export interface ClientMessage {
     title?: string;
     lastAckId?: number;
     msgId?: number;
-    path?: string;
   };
 }
 
@@ -62,16 +63,8 @@ export type Theme = 'dark' | 'light' | 'system';
 export interface Project {
   path: string;
   name: string;
-  type: string;
-  active: boolean;
-}
-
-export interface ProjectStatus {
-  path: string;
-  name: string;
-  type: string;
-  port: number;
-  status: 'running' | 'stopped';
+  sessionCount: number;
+  lastUpdated: number;
 }
 
 export interface AppSettings {

@@ -101,14 +101,41 @@ export default function Home() {
   const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
       case 'response': {
-        const payload = msg.payload as { id?: string; sessionId?: string; title?: string };
-        const sessionId = payload.id || payload.sessionId;
+        const payload = msg.payload;
+        
+        if (Array.isArray(payload)) {
+          interface ServerSession {
+            id: string;
+            title: string;
+            directory?: string;
+            time?: { created: number; updated: number };
+          }
+          const serverSessions = payload as ServerSession[];
+          const mappedSessions: Session[] = serverSessions.map(s => ({
+            id: s.id,
+            title: s.title || 'New Chat',
+            createdAt: s.time?.created || Date.now(),
+            messages: [],
+            directory: s.directory,
+            time: s.time,
+          }));
+          setSessions(mappedSessions);
+          
+          if (mappedSessions.length > 0 && !currentSessionId) {
+            setCurrentSessionId(mappedSessions[0].id);
+          }
+          return;
+        }
+        
+        const responsePayload = payload as { id?: string; sessionId?: string; title?: string; directory?: string };
+        const sessionId = responsePayload.id || responsePayload.sessionId;
         if (sessionId && isCreatingSession) {
           const newSession: Session = {
             id: sessionId,
-            title: payload.title || 'New Chat',
+            title: responsePayload.title || 'New Chat',
             createdAt: Date.now(),
             messages: [],
+            directory: responsePayload.directory,
           };
           setSessions(prev => {
             const updated = [newSession, ...prev];
@@ -194,21 +221,15 @@ export default function Home() {
     }
   }, [currentSessionId, isCreatingSession, updateSessionMessages]);
 
-  const isCreatingSessionRef = useRef(false);
-
   const { state, send } = useWebSocket({
     url: WS_URL,
     onMessage: handleMessage,
     onConnect: () => {
-      if (sessions.length === 0 && !currentSessionId && !isCreatingSessionRef.current) {
-        isCreatingSessionRef.current = true;
-        setIsCreatingSession(true);
-        send({
-          type: 'session.create',
-          id: generateId(),
-          payload: { title: 'New Chat' },
-        });
-      }
+      send({
+        type: 'session.list',
+        id: generateId(),
+        payload: {},
+      });
     },
   });
 
@@ -217,18 +238,12 @@ export default function Home() {
   const {
     projects,
     activeProject,
-    isLoading: isLoadingProjects,
-    fetchProjects,
     selectProject,
-  } = useProject({ send, isConnected });
+  } = useProject({ sessions });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  useEffect(() => {
-    isCreatingSessionRef.current = isCreatingSession;
-  }, [isCreatingSession]);
 
   const handleNewSession = useCallback(() => {
     if (state !== 'connected' || isCreatingSession) return;
@@ -313,9 +328,7 @@ export default function Home() {
               <ProjectSelector
                 projects={projects}
                 activeProject={activeProject}
-                isLoading={isLoadingProjects}
                 onSelect={selectProject}
-                onRefresh={fetchProjects}
                 disabled={!isConnected}
               />
             </div>

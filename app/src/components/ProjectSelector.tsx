@@ -2,28 +2,27 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '@/types';
-import { FolderIcon, ChevronDownIcon, IconRefresh } from './Icons';
+import { FolderIcon, ChevronDownIcon } from './Icons';
 
 interface ProjectSelectorProps {
   projects: Project[];
   activeProject: Project | null;
-  isLoading: boolean;
   onSelect: (path: string) => void;
-  onRefresh: () => void;
   disabled?: boolean;
 }
 
-function getProjectTypeColor(type: string): string {
-  const colors: Record<string, string> = {
-    go: '#00ADD8',
-    node: '#68A063',
-    python: '#3776AB',
-    rust: '#DEA584',
-    java: '#ED8B00',
-    ruby: '#CC342D',
-    php: '#777BB4',
-  };
-  return colors[type.toLowerCase()] || 'var(--accent-primary)';
+function formatTimeAgo(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
 }
 
 function ProjectItem({
@@ -47,28 +46,17 @@ function ProjectItem({
         }
       `}
     >
-      <div
-        className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-        style={{ backgroundColor: `${getProjectTypeColor(project.type)}20` }}
-      >
-        <FolderIcon
-          className="w-4 h-4"
-          style={{ color: getProjectTypeColor(project.type) }}
-        />
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-[rgba(0,255,157,0.1)]">
+        <FolderIcon className="w-4 h-4 text-[var(--accent-primary)]" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-[var(--text-primary)] truncate">
           {project.name}
         </div>
         <div className="text-xs text-[var(--text-muted)] flex items-center gap-1.5">
-          <span
-            className="inline-block w-1.5 h-1.5 rounded-full"
-            style={{ backgroundColor: getProjectTypeColor(project.type) }}
-          />
-          <span>{project.type}</span>
-          {project.active && (
-            <span className="text-[var(--accent-primary)] ml-1">• running</span>
-          )}
+          <span>{project.sessionCount} sessions</span>
+          <span>•</span>
+          <span>{formatTimeAgo(project.lastUpdated)}</span>
         </div>
       </div>
       {isActive && (
@@ -81,9 +69,7 @@ function ProjectItem({
 export const ProjectSelector = memo(function ProjectSelector({
   projects,
   activeProject,
-  isLoading,
   onSelect,
-  onRefresh,
   disabled = false,
 }: ProjectSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -99,11 +85,6 @@ export const ProjectSelector = memo(function ProjectSelector({
     setIsOpen(false);
   }, [onSelect]);
 
-  const handleRefresh = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    onRefresh();
-  }, [onRefresh]);
-
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -114,9 +95,9 @@ export const ProjectSelector = memo(function ProjectSelector({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  useEffect(() => {
-    onRefresh();
-  }, [onRefresh]);
+  if (projects.length === 0) {
+    return null;
+  }
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -131,19 +112,10 @@ export const ProjectSelector = memo(function ProjectSelector({
           ${isOpen ? 'border-[var(--accent-primary)]' : ''}
         `}
       >
-        {isLoading ? (
-          <div className="w-4 h-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
-        ) : (
-          <FolderIcon className="w-4 h-4 text-[var(--accent-primary)]" />
-        )}
+        <FolderIcon className="w-4 h-4 text-[var(--accent-primary)]" />
         <span className="text-sm font-medium text-[var(--text-primary)] max-w-[120px] truncate">
-          {activeProject?.name || 'Select Project'}
+          {activeProject?.name || projects[0]?.name || 'Projects'}
         </span>
-        {activeProject && (
-          <span className="text-xs text-[var(--text-muted)]">
-            • {activeProject.type}
-          </span>
-        )}
         <ChevronDownIcon
           className={`w-4 h-4 text-[var(--text-muted)] transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
         />
@@ -154,36 +126,18 @@ export const ProjectSelector = memo(function ProjectSelector({
           <div className="glass rounded-xl shadow-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-color)]">
               <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Projects
+                Projects ({projects.length})
               </span>
-              <button
-                onClick={handleRefresh}
-                disabled={isLoading}
-                className={`
-                  p-1.5 rounded-md text-[var(--text-muted)]
-                  hover:text-[var(--accent-primary)] hover:bg-[rgba(0,255,157,0.1)]
-                  transition-all duration-200
-                  ${isLoading ? 'animate-spin' : ''}
-                `}
-              >
-                <IconRefresh className="w-4 h-4" />
-              </button>
             </div>
             <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
-              {projects.length === 0 ? (
-                <div className="text-center py-6 text-[var(--text-muted)] text-sm">
-                  {isLoading ? 'Loading projects...' : 'No projects found'}
-                </div>
-              ) : (
-                projects.map(project => (
-                  <ProjectItem
-                    key={project.path}
-                    project={project}
-                    isActive={activeProject?.path === project.path}
-                    onSelect={() => handleSelect(project.path)}
-                  />
-                ))
-              )}
+              {projects.map(project => (
+                <ProjectItem
+                  key={project.path}
+                  project={project}
+                  isActive={activeProject?.path === project.path}
+                  onSelect={() => handleSelect(project.path)}
+                />
+              ))}
             </div>
           </div>
         </div>

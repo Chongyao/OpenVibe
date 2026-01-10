@@ -226,9 +226,6 @@ func (c *Client) handleMessage(data []byte) {
 			c.lastAckID = payload.MsgID
 		}
 
-	case "project.list", "project.select", "project.stop", "project.status":
-		c.handleProjectMessage(msg.ID, msg.Type, msg.Payload)
-
 	default:
 		c.sendError(msg.ID, "Unknown message type: "+msg.Type)
 	}
@@ -496,18 +493,4 @@ func (c *Client) sendError(requestID string, errMsg string) {
 			"error": errMsg,
 		},
 	})
-}
-
-// handleProjectMessage forwards project management messages to Agent
-func (c *Client) handleProjectMessage(requestID, msgType string, payload json.RawMessage) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	agent, ok := c.server.tunnelMgr.GetAnyAgent()
-	if !ok {
-		c.sendError(requestID, "No agent connected. Please start the OpenVibe agent on your development server.")
-		return
-	}
-
-	c.handleViaAgent(ctx, requestID, agent.ID, msgType, payload)
 }
