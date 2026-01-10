@@ -44,9 +44,10 @@ type RegisteredPayload struct {
 
 // RequestPayload is sent by Hub to forward a client request
 type RequestPayload struct {
-	SessionID string          `json:"sessionId"`
-	Action    string          `json:"action"` // "prompt", "session.create", "session.list"
-	Data      json.RawMessage `json:"data"`
+	SessionID   string          `json:"sessionId"`
+	Action      string          `json:"action"` // "prompt", "session.create", "session.list"
+	Data        json.RawMessage `json:"data"`
+	ProjectPath string          `json:"projectPath,omitempty"`
 }
 
 // StreamPayload is sent by Agent for streaming responses

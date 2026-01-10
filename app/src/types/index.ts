@@ -27,6 +27,7 @@ export interface ClientMessage {
     msgId?: number;
     path?: string;
     projectPath?: string;
+    directory?: string;
   };
 }
 

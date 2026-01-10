@@ -66,6 +66,7 @@ type PromptPayload struct {
 type SessionPayload struct {
 	SessionID string `json:"sessionId,omitempty"`
 	Title     string `json:"title,omitempty"`
+	Directory string `json:"directory,omitempty"`
 }
 
 type SyncPayload struct {
@@ -199,7 +200,7 @@ func (c *Client) handleMessage(data []byte) {
 			c.sendError(msg.ID, "Invalid payload format")
 			return
 		}
-		c.handleSessionCreate(msg.ID, payload.Title)
+		c.handleSessionCreate(msg.ID, payload.Title, payload.Directory)
 
 	case "prompt":
 		var payload PromptPayload
@@ -281,13 +282,13 @@ func (c *Client) handleSessionList(requestID string) {
 	})
 }
 
-func (c *Client) handleSessionCreate(requestID string, title string) {
+func (c *Client) handleSessionCreate(requestID string, title string, directory string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
-		data, _ := json.Marshal(map[string]string{"title": title})
-		c.handleViaAgent(ctx, requestID, agent.ID, "session.create", "", data)
+		data, _ := json.Marshal(map[string]string{"title": title, "directory": directory})
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.create", directory, data)
 		return
 	}
 
@@ -324,7 +325,8 @@ func (c *Client) handleSessionMessages(requestID string, sessionID string) {
 	}
 
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
-		c.handleViaAgent(ctx, requestID, agent.ID, "session.messages", sessionID, nil)
+		data, _ := json.Marshal(map[string]string{"sessionId": sessionID})
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.messages", "", data)
 		return
 	}
 
@@ -341,7 +343,8 @@ func (c *Client) handleSessionDelete(requestID string, sessionID string) {
 	}
 
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
-		c.handleViaAgent(ctx, requestID, agent.ID, "session.delete", sessionID, nil)
+		data, _ := json.Marshal(map[string]string{"sessionId": sessionID})
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.delete", "", data)
 		return
 	}
 
@@ -463,15 +466,22 @@ func (c *Client) handleSync(requestID string, payload SyncPayload) {
 	})
 }
 
-func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action string, sessionID string, data json.RawMessage) {
-	if sessionID == "" {
-		sessionID = c.sessionID
+func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action string, projectPath string, data json.RawMessage) {
+	sessionID := c.sessionID
+	if data != nil {
+		var dataMap map[string]interface{}
+		if json.Unmarshal(data, &dataMap) == nil {
+			if sid, ok := dataMap["sessionId"].(string); ok && sid != "" {
+				sessionID = sid
+			}
+		}
 	}
 
 	req := &tunnel.RequestPayload{
-		SessionID: sessionID,
-		Action:    action,
-		Data:      data,
+		SessionID:   sessionID,
+		Action:      action,
+		Data:        data,
+		ProjectPath: projectPath,
 	}
 
 	respCh, err := c.server.tunnelMgr.Forward(ctx, agentID, requestID, req)

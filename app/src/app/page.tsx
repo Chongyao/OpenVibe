@@ -45,7 +45,14 @@ export default function Home() {
     stopProject,
     handleResponse: handleProjectResponse,
     handleError: handleProjectError,
-  } = useProjects({ send: (msg) => sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage) });
+  } = useProjects({ 
+  send: (msg) => {
+    const result = sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage);
+    if (result === undefined) {
+      console.warn('[useProjects] WebSocket not ready, message not sent:', msg.type);
+    }
+  }
+});
 
   const listProjectsRef = useRef(listProjects);
   listProjectsRef.current = listProjects;
@@ -110,6 +117,12 @@ export default function Home() {
     return projects.find(p => p.path === activeProjectPath) || projects[0] || null;
   }, [projects, activeProjectPath]);
 
+  useEffect(() => {
+    if (projects.length > 0 && !activeProjectPath) {
+      setActiveProjectPath(projects[0].path);
+    }
+  }, [projects, activeProjectPath]);
+
   const filteredSessions = useMemo(() => {
     const projectPath = activeProject?.path;
     if (!projectPath) return sessions;
@@ -165,9 +178,12 @@ export default function Home() {
     send({
       type: 'session.create',
       id: generateId(),
-      payload: { title: 'New Chat' },
+      payload: { 
+        title: 'New Chat',
+        directory: activeProject?.path 
+      },
     });
-  }, [state, send, isCreatingSession]);
+  }, [state, send, isCreatingSession, activeProject]);
 
   const handleSelectSession = useCallback((sessionId: string) => {
     const session = sessions.find(s => s.id === sessionId);

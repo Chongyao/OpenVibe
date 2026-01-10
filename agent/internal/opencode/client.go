@@ -41,7 +41,8 @@ type PromptData struct {
 }
 
 type SessionCreateData struct {
-	Title string `json:"title"`
+	Title     string `json:"title"`
+	Directory string `json:"directory,omitempty"`
 }
 
 type OpenCodeResponse struct {
@@ -105,6 +106,16 @@ func (c *Client) handleSessionCreate(ctx context.Context, baseURL string, data j
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+
+	if createData.Directory != "" {
+		var respData map[string]interface{}
+		if err := json.Unmarshal(respBody, &respData); err == nil {
+			respData["directory"] = createData.Directory
+			modifiedResp, _ := json.Marshal(respData)
+			ch <- modifiedResp
+			return
+		}
+	}
 	ch <- respBody
 }
 
