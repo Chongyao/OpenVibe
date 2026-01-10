@@ -253,7 +253,7 @@ export default function Home() {
           <div className="flex items-center justify-between px-4 py-3 max-w-4xl mx-auto">
             <div className="flex items-center gap-3 pl-12 md:pl-0">
               <h1 className="text-lg font-semibold neon-text hidden md:block">OpenVibe</h1>
-              {projects.length > 1 && (
+              {projects.length > 0 && (
                 <ProjectSelector
                   projects={projects}
                   activeProject={activeProject}
