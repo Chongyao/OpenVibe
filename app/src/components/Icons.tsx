@@ -5,6 +5,7 @@ import { memo } from 'react';
 interface IconProps {
   className?: string;
   size?: number;
+  style?: React.CSSProperties;
 }
 
 export const IconSend = memo(function IconSend({ className = '', size = 20 }: IconProps) {
@@ -125,3 +126,20 @@ export const TrashIcon = IconTrash;
 export const MenuIcon = IconMenu;
 export const CloseIcon = IconX;
 export const SettingsIcon = IconSettings;
+export const RefreshIcon = IconRefresh;
+
+export const FolderIcon = memo(function FolderIcon({ className = '', size = 16, style }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={className} width={size} height={size} style={style}>
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+});
+
+export const ChevronDownIcon = memo(function ChevronDownIcon({ className = '', size = 16 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={className} width={size} height={size}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+});

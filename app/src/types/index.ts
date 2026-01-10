@@ -15,7 +15,7 @@ export interface Session {
 }
 
 export interface ClientMessage {
-  type: 'ping' | 'session.create' | 'session.list' | 'prompt' | 'sync' | 'ack';
+  type: 'ping' | 'session.create' | 'session.list' | 'prompt' | 'sync' | 'ack' | 'project.list' | 'project.select' | 'project.stop' | 'project.status';
   id: string;
   payload: {
     sessionId?: string;
@@ -23,13 +23,14 @@ export interface ClientMessage {
     title?: string;
     lastAckId?: number;
     msgId?: number;
+    path?: string;
   };
 }
 
 export interface ServerMessage {
   type: 'pong' | 'response' | 'stream' | 'stream.end' | 'error' | 'sync.batch';
   id?: string;
-  msgId?: number; // Buffer message ID
+  msgId?: number;
   payload: unknown;
 }
 
@@ -57,6 +58,21 @@ export interface BufferedMessage {
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export type Theme = 'dark' | 'light' | 'system';
+
+export interface Project {
+  path: string;
+  name: string;
+  type: string;
+  active: boolean;
+}
+
+export interface ProjectStatus {
+  path: string;
+  name: string;
+  type: string;
+  port: number;
+  status: 'running' | 'stopped';
+}
 
 export interface AppSettings {
   theme: Theme;

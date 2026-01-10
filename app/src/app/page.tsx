@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageBubble, InputBar, StatusIndicator, SessionSidebar, SettingsPanel, MacroDeck } from '@/components';
+import { MessageBubble, InputBar, StatusIndicator, SessionSidebar, SettingsPanel, MacroDeck, ProjectSelector } from '@/components';
 import type { MacroAction } from '@/components';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useProject } from '@/hooks/useProject';
 import type { Message, Session, ServerMessage, StreamPayload } from '@/types';
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 
@@ -211,6 +212,16 @@ export default function Home() {
     },
   });
 
+  const isConnected = state === 'connected';
+
+  const {
+    projects,
+    activeProject,
+    isLoading: isLoadingProjects,
+    fetchProjects,
+    selectProject,
+  } = useProject({ send, isConnected });
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -275,7 +286,6 @@ export default function Home() {
     });
   }, [currentSessionId, state, send, updateSessionMessages]);
 
-  const isConnected = state === 'connected';
   const isReady = isConnected && currentSessionId;
   const isStreaming = messages.some(m => m.streaming);
 
@@ -299,7 +309,15 @@ export default function Home() {
         <header className="safe-area-top glass border-b border-[var(--border-color)] flex-shrink-0">
           <div className="flex items-center justify-between px-4 py-3 max-w-4xl mx-auto">
             <div className="flex items-center gap-3 pl-12 md:pl-0">
-              <h1 className="text-lg font-semibold neon-text">OpenVibe</h1>
+              <h1 className="text-lg font-semibold neon-text hidden md:block">OpenVibe</h1>
+              <ProjectSelector
+                projects={projects}
+                activeProject={activeProject}
+                isLoading={isLoadingProjects}
+                onSelect={selectProject}
+                onRefresh={fetchProjects}
+                disabled={!isConnected}
+              />
             </div>
             <div className="flex items-center gap-3">
               <StatusIndicator state={state} />

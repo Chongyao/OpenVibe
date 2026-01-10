@@ -5,3 +5,4 @@ export { SessionSidebar } from './SessionSidebar';
 export { SettingsPanel } from './SettingsPanel';
 export { MacroDeck } from './MacroDeck';
 export type { MacroAction } from './MacroDeck';
+export { ProjectSelector } from './ProjectSelector';
