@@ -1,4 +1,3 @@
-// Package tunnel provides WebSocket tunnel client for connecting to Hub
 package tunnel
 
 import (
@@ -8,9 +7,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/openvibe/agent/internal/opencode"
+	"github.com/openvibe/agent/internal/project"
 )
 
-// Message types
 const (
 	MsgTypeRegister   = "agent.register"
 	MsgTypePong       = "agent.pong"
@@ -23,14 +23,12 @@ const (
 	MsgTypeRequest    = "agent.request"
 )
 
-// Message represents a tunnel protocol message
 type Message struct {
 	Type    string          `json:"type"`
 	ID      string          `json:"id,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-// RegisterPayload is sent to register with Hub
 type RegisterPayload struct {
 	AgentID      string   `json:"agentId"`
 	Token        string   `json:"token"`
@@ -38,49 +36,41 @@ type RegisterPayload struct {
 	Version      string   `json:"version"`
 }
 
-// RegisteredPayload is received on registration
 type RegisteredPayload struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 }
 
-// RequestPayload is received for client requests
 type RequestPayload struct {
-	SessionID string          `json:"sessionId"`
-	Action    string          `json:"action"`
-	Data      json.RawMessage `json:"data"`
+	SessionID   string          `json:"sessionId"`
+	Action      string          `json:"action"`
+	Data        json.RawMessage `json:"data"`
+	ProjectPath string          `json:"projectPath,omitempty"`
 }
 
-// RequestHandler handles incoming requests
-type RequestHandler interface {
-	HandleRequest(ctx context.Context, sessionID, action string, data json.RawMessage) (<-chan []byte, error)
-}
-
-// Client is a tunnel client that connects to Hub
 type Client struct {
-	hubURL  string
-	agentID string
-	token   string
-	handler RequestHandler
-	conn    *websocket.Conn
-
+	hubURL         string
+	agentID        string
+	token          string
+	opencodeClient *opencode.Client
+	projectMgr     *project.Manager
+	conn           *websocket.Conn
 	reconnectDelay time.Duration
 	maxReconnect   time.Duration
 }
 
-// NewClient creates a new tunnel client
-func NewClient(hubURL, agentID, token string, handler RequestHandler) *Client {
+func NewClient(hubURL, agentID, token string, opencodeClient *opencode.Client, projectMgr *project.Manager) *Client {
 	return &Client{
 		hubURL:         hubURL,
 		agentID:        agentID,
 		token:          token,
-		handler:        handler,
+		opencodeClient: opencodeClient,
+		projectMgr:     projectMgr,
 		reconnectDelay: time.Second,
 		maxReconnect:   30 * time.Second,
 	}
 }
 
-// Run connects to Hub and processes requests
 func (c *Client) Run(ctx context.Context) error {
 	for {
 		select {
@@ -96,19 +86,16 @@ func (c *Client) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(c.reconnectDelay):
-				// Exponential backoff
 				c.reconnectDelay = min(c.reconnectDelay*2, c.maxReconnect)
 			}
 			continue
 		}
 
-		// Connection closed normally, reset delay
 		c.reconnectDelay = time.Second
 	}
 }
 
 func (c *Client) connectAndRun(ctx context.Context) error {
-	// Connect
 	log.Printf("Connecting to Hub: %s", c.hubURL)
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.hubURL, nil)
 	if err != nil {
@@ -117,12 +104,11 @@ func (c *Client) connectAndRun(ctx context.Context) error {
 	c.conn = conn
 	defer conn.Close()
 
-	// Register
 	regPayload, _ := json.Marshal(RegisterPayload{
 		AgentID:      c.agentID,
 		Token:        c.token,
-		Capabilities: []string{"opencode"},
-		Version:      "0.1.0",
+		Capabilities: []string{"opencode", "multi-project"},
+		Version:      "0.2.0",
 	})
 
 	if err := conn.WriteJSON(Message{
@@ -132,7 +118,6 @@ func (c *Client) connectAndRun(ctx context.Context) error {
 		return err
 	}
 
-	// Wait for registration response
 	var regResp Message
 	if err := conn.ReadJSON(&regResp); err != nil {
 		return err
@@ -150,9 +135,12 @@ func (c *Client) connectAndRun(ctx context.Context) error {
 	}
 
 	log.Printf("Registered with Hub successfully")
-	c.reconnectDelay = time.Second // Reset on successful connect
+	c.reconnectDelay = time.Second
 
-	// Main loop
+	if c.projectMgr != nil {
+		c.projectMgr.SyncWithTmux(ctx)
+	}
+
 	return c.readLoop(ctx)
 }
 
@@ -186,9 +174,111 @@ func (c *Client) handleRequest(ctx context.Context, msg Message) {
 		return
 	}
 
-	streamCh, err := c.handler.HandleRequest(ctx, req.SessionID, req.Action, req.Data)
+	switch req.Action {
+	case "project.list":
+		c.handleProjectList(msg.ID)
+	case "project.start":
+		c.handleProjectStart(ctx, msg.ID, req.Data)
+	case "project.stop":
+		c.handleProjectStop(ctx, msg.ID, req.Data)
+	default:
+		c.handleOpenCodeRequest(ctx, msg.ID, req)
+	}
+}
+
+func (c *Client) handleProjectList(requestID string) {
+	if c.projectMgr == nil {
+		c.sendError(requestID, "project manager not configured")
+		return
+	}
+
+	projects := c.projectMgr.List()
+	payload, _ := json.Marshal(map[string]interface{}{"projects": projects})
+	c.conn.WriteJSON(Message{
+		Type:    MsgTypeResponse,
+		ID:      requestID,
+		Payload: payload,
+	})
+}
+
+func (c *Client) handleProjectStart(ctx context.Context, requestID string, data json.RawMessage) {
+	if c.projectMgr == nil {
+		c.sendError(requestID, "project manager not configured")
+		return
+	}
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		c.sendError(requestID, "invalid project.start payload")
+		return
+	}
+
+	inst, err := c.projectMgr.Start(ctx, req.Path)
 	if err != nil {
-		c.sendError(msg.ID, err.Error())
+		c.sendError(requestID, err.Error())
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]interface{}{"project": inst})
+	c.conn.WriteJSON(Message{
+		Type:    MsgTypeResponse,
+		ID:      requestID,
+		Payload: payload,
+	})
+}
+
+func (c *Client) handleProjectStop(ctx context.Context, requestID string, data json.RawMessage) {
+	if c.projectMgr == nil {
+		c.sendError(requestID, "project manager not configured")
+		return
+	}
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		c.sendError(requestID, "invalid project.stop payload")
+		return
+	}
+
+	if err := c.projectMgr.Stop(ctx, req.Path); err != nil {
+		c.sendError(requestID, err.Error())
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]bool{"success": true})
+	c.conn.WriteJSON(Message{
+		Type:    MsgTypeResponse,
+		ID:      requestID,
+		Payload: payload,
+	})
+}
+
+func (c *Client) handleOpenCodeRequest(ctx context.Context, requestID string, req RequestPayload) {
+	var baseURL string
+
+	if c.projectMgr != nil && req.ProjectPath != "" {
+		url, err := c.projectMgr.GetOpenCodeURL(req.ProjectPath)
+		if err != nil {
+			c.sendError(requestID, err.Error())
+			return
+		}
+		baseURL = url
+	}
+
+	var streamCh <-chan []byte
+	var err error
+
+	if baseURL != "" {
+		streamCh, err = c.opencodeClient.HandleRequestWithURL(ctx, baseURL, req.SessionID, req.Action, req.Data)
+	} else {
+		streamCh, err = c.opencodeClient.HandleRequest(ctx, req.SessionID, req.Action, req.Data)
+	}
+
+	if err != nil {
+		c.sendError(requestID, err.Error())
 		return
 	}
 
@@ -198,13 +288,13 @@ func (c *Client) handleRequest(ctx context.Context, msg Message) {
 		for chunk := range streamCh {
 			c.conn.WriteJSON(Message{
 				Type:    MsgTypeStream,
-				ID:      msg.ID,
+				ID:      requestID,
 				Payload: chunk,
 			})
 		}
 		c.conn.WriteJSON(Message{
 			Type: MsgTypeStreamEnd,
-			ID:   msg.ID,
+			ID:   requestID,
 		})
 	} else {
 		var responseData []byte
@@ -213,7 +303,7 @@ func (c *Client) handleRequest(ctx context.Context, msg Message) {
 		}
 		c.conn.WriteJSON(Message{
 			Type:    MsgTypeResponse,
-			ID:      msg.ID,
+			ID:      requestID,
 			Payload: responseData,
 		})
 	}

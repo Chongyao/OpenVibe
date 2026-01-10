@@ -1,39 +1,63 @@
 'use client';
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import type { Project } from '@/types';
+import type { Project, ProjectStatus } from '@/types';
 import { FolderIcon, ChevronDownIcon } from './Icons';
 
 interface ProjectSelectorProps {
   projects: Project[];
   activeProject: Project | null;
   onSelect: (path: string) => void;
+  onStart?: (path: string) => void;
+  onStop?: (path: string) => void;
   disabled?: boolean;
+  loading?: boolean;
 }
 
-function formatTimeAgo(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
+function StatusIndicator({ status }: { status: ProjectStatus }) {
+  const statusConfig: Record<ProjectStatus, { color: string; label: string; animate?: boolean }> = {
+    running: { color: 'bg-[var(--accent-primary)]', label: 'Running', animate: true },
+    starting: { color: 'bg-yellow-400', label: 'Starting', animate: true },
+    stopped: { color: 'bg-gray-500', label: 'Stopped' },
+    error: { color: 'bg-[var(--accent-error)]', label: 'Error' },
+  };
+
+  const config = statusConfig[status] || statusConfig.stopped;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className={`w-2 h-2 rounded-full ${config.color} ${config.animate ? 'animate-pulse' : ''}`} />
+      <span className="text-xs text-[var(--text-muted)]">{config.label}</span>
+    </div>
+  );
 }
 
 function ProjectItem({
   project,
   isActive,
   onSelect,
+  onStart,
+  onStop,
 }: {
   project: Project;
   isActive: boolean;
   onSelect: () => void;
+  onStart?: () => void;
+  onStop?: () => void;
 }) {
+  const handleAction = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (project.status === 'running') {
+      onStop?.();
+    } else if (project.status === 'stopped' || project.status === 'error') {
+      onStart?.();
+    }
+  }, [project.status, onStart, onStop]);
+
+  const canStart = project.status === 'stopped' || project.status === 'error';
+  const canStop = project.status === 'running';
+  const isLoading = project.status === 'starting';
+
   return (
     <button
       onClick={onSelect}
@@ -53,14 +77,26 @@ function ProjectItem({
         <div className="text-sm font-medium text-[var(--text-primary)] truncate">
           {project.name}
         </div>
-        <div className="text-xs text-[var(--text-muted)] flex items-center gap-1.5">
-          <span>{project.sessionCount} sessions</span>
-          <span>•</span>
-          <span>{formatTimeAgo(project.lastUpdated)}</span>
-        </div>
+        <StatusIndicator status={project.status} />
       </div>
-      {isActive && (
-        <div className="w-2 h-2 rounded-full bg-[var(--accent-primary)] animate-pulse-glow" />
+      {(canStart || canStop) && (
+        <button
+          onClick={handleAction}
+          disabled={isLoading}
+          className={`
+            px-2 py-1 text-xs font-medium rounded-md transition-all
+            ${canStart 
+              ? 'bg-[var(--accent-primary)] text-black hover:opacity-90' 
+              : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--accent-error)] hover:text-white'
+            }
+            ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
+          `}
+        >
+          {canStart ? 'Start' : 'Stop'}
+        </button>
+      )}
+      {isLoading && (
+        <div className="w-4 h-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
       )}
     </button>
   );
@@ -70,7 +106,10 @@ export const ProjectSelector = memo(function ProjectSelector({
   projects,
   activeProject,
   onSelect,
+  onStart,
+  onStop,
   disabled = false,
+  loading = false,
 }: ProjectSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -99,34 +138,46 @@ export const ProjectSelector = memo(function ProjectSelector({
     return null;
   }
 
+  const runningCount = projects.filter(p => p.status === 'running').length;
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={handleToggle}
-        disabled={disabled}
+        disabled={disabled || loading}
         className={`
           flex items-center gap-2 px-3 py-1.5 rounded-lg
           bg-[var(--bg-tertiary)] border border-[var(--border-color)]
           transition-all duration-200
-          ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--accent-primary)] hover:shadow-[var(--glow-primary)]'}
+          ${disabled || loading ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--accent-primary)] hover:shadow-[var(--glow-primary)]'}
           ${isOpen ? 'border-[var(--accent-primary)]' : ''}
         `}
       >
-        <FolderIcon className="w-4 h-4 text-[var(--accent-primary)]" />
+        {loading ? (
+          <div className="w-4 h-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <FolderIcon className="w-4 h-4 text-[var(--accent-primary)]" />
+        )}
         <span className="text-sm font-medium text-[var(--text-primary)] max-w-[120px] truncate">
           {activeProject?.name || projects[0]?.name || 'Projects'}
         </span>
+        {activeProject && (
+          <div className={`w-2 h-2 rounded-full ${activeProject.status === 'running' ? 'bg-[var(--accent-primary)]' : 'bg-gray-500'}`} />
+        )}
         <ChevronDownIcon
           className={`w-4 h-4 text-[var(--text-muted)] transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
         />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-72 z-50 animate-fade-in">
+        <div className="absolute top-full left-0 mt-2 w-80 z-50 animate-fade-in">
           <div className="glass rounded-xl shadow-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-color)]">
               <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
                 Projects ({projects.length})
+              </span>
+              <span className="text-xs text-[var(--accent-primary)]">
+                {runningCount} running
               </span>
             </div>
             <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
@@ -136,6 +187,8 @@ export const ProjectSelector = memo(function ProjectSelector({
                   project={project}
                   isActive={activeProject?.path === project.path}
                   onSelect={() => handleSelect(project.path)}
+                  onStart={() => onStart?.(project.path)}
+                  onStop={() => onStop?.(project.path)}
                 />
               ))}
             </div>

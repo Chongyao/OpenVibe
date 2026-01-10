@@ -34,12 +34,15 @@ function extractProjectsFromSessions(sessions: Session[]): Project[] {
     projects.push({
       path,
       name,
+      port: 0,
+      tmuxSession: '',
+      status: 'stopped',
       sessionCount: data.count,
       lastUpdated: data.lastUpdated,
     });
   }
   
-  projects.sort((a, b) => b.lastUpdated - a.lastUpdated);
+  projects.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
   return projects;
 }
 

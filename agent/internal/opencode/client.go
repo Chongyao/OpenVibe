@@ -1,4 +1,3 @@
-// Package opencode provides HTTP client for OpenCode API
 package opencode
 
 import (
@@ -11,48 +10,40 @@ import (
 	"strings"
 )
 
-// Client is an OpenCode HTTP client
 type Client struct {
-	baseURL    string
+	defaultURL string
 	httpClient *http.Client
 }
 
-// NewClient creates a new OpenCode client
-func NewClient(baseURL string) *Client {
+func NewClient(defaultURL string) *Client {
 	return &Client{
-		baseURL:    strings.TrimSuffix(baseURL, "/"),
+		defaultURL: strings.TrimSuffix(defaultURL, "/"),
 		httpClient: &http.Client{},
 	}
 }
 
-// SessionInfo represents a session
 type SessionInfo struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }
 
-// PromptRequest represents a message prompt
 type PromptRequest struct {
 	Parts []PromptPart `json:"parts"`
 }
 
-// PromptPart represents a prompt part
 type PromptPart struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 }
 
-// PromptData is the data sent with prompt action
 type PromptData struct {
 	Content string `json:"content"`
 }
 
-// SessionCreateData is the data sent with session.create action
 type SessionCreateData struct {
 	Title string `json:"title"`
 }
 
-// OpenCodeResponse is the response from OpenCode
 type OpenCodeResponse struct {
 	Info  json.RawMessage `json:"info"`
 	Parts []struct {
@@ -61,8 +52,16 @@ type OpenCodeResponse struct {
 	} `json:"parts"`
 }
 
-// HandleRequest implements the RequestHandler interface
 func (c *Client) HandleRequest(ctx context.Context, sessionID, action string, data json.RawMessage) (<-chan []byte, error) {
+	return c.HandleRequestWithURL(ctx, c.defaultURL, sessionID, action, data)
+}
+
+func (c *Client) HandleRequestWithURL(ctx context.Context, baseURL, sessionID, action string, data json.RawMessage) (<-chan []byte, error) {
+	if baseURL == "" {
+		baseURL = c.defaultURL
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+
 	ch := make(chan []byte, 100)
 
 	go func() {
@@ -70,15 +69,15 @@ func (c *Client) HandleRequest(ctx context.Context, sessionID, action string, da
 
 		switch action {
 		case "session.create":
-			c.handleSessionCreate(ctx, data, ch)
+			c.handleSessionCreate(ctx, baseURL, data, ch)
 		case "session.list":
-			c.handleSessionList(ctx, ch)
+			c.handleSessionList(ctx, baseURL, ch)
 		case "session.messages":
-			c.handleSessionMessages(ctx, sessionID, ch)
+			c.handleSessionMessages(ctx, baseURL, sessionID, ch)
 		case "session.delete":
-			c.handleSessionDelete(ctx, sessionID, ch)
+			c.handleSessionDelete(ctx, baseURL, sessionID, ch)
 		case "prompt":
-			c.handlePrompt(ctx, sessionID, data, ch)
+			c.handlePrompt(ctx, baseURL, sessionID, data, ch)
 		default:
 			errPayload, _ := json.Marshal(map[string]string{"error": "unknown action: " + action})
 			ch <- errPayload
@@ -88,12 +87,12 @@ func (c *Client) HandleRequest(ctx context.Context, sessionID, action string, da
 	return ch, nil
 }
 
-func (c *Client) handleSessionCreate(ctx context.Context, data json.RawMessage, ch chan<- []byte) {
+func (c *Client) handleSessionCreate(ctx context.Context, baseURL string, data json.RawMessage, ch chan<- []byte) {
 	var createData SessionCreateData
 	json.Unmarshal(data, &createData)
 
 	body, _ := json.Marshal(map[string]string{"title": createData.Title})
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/session", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/session", bytes.NewReader(body))
 	if err != nil {
 		return
 	}
@@ -109,8 +108,8 @@ func (c *Client) handleSessionCreate(ctx context.Context, data json.RawMessage, 
 	ch <- respBody
 }
 
-func (c *Client) handleSessionList(ctx context.Context, ch chan<- []byte) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/session", nil)
+func (c *Client) handleSessionList(ctx context.Context, baseURL string, ch chan<- []byte) {
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/session", nil)
 	if err != nil {
 		return
 	}
@@ -126,8 +125,8 @@ func (c *Client) handleSessionList(ctx context.Context, ch chan<- []byte) {
 	ch <- respBody
 }
 
-func (c *Client) handleSessionMessages(ctx context.Context, sessionID string, ch chan<- []byte) {
-	url := fmt.Sprintf("%s/session/%s/message", c.baseURL, sessionID)
+func (c *Client) handleSessionMessages(ctx context.Context, baseURL, sessionID string, ch chan<- []byte) {
+	url := fmt.Sprintf("%s/session/%s/message", baseURL, sessionID)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
@@ -155,8 +154,8 @@ func (c *Client) handleSessionMessages(ctx context.Context, sessionID string, ch
 	ch <- respBody
 }
 
-func (c *Client) handleSessionDelete(ctx context.Context, sessionID string, ch chan<- []byte) {
-	url := fmt.Sprintf("%s/session/%s", c.baseURL, sessionID)
+func (c *Client) handleSessionDelete(ctx context.Context, baseURL, sessionID string, ch chan<- []byte) {
+	url := fmt.Sprintf("%s/session/%s", baseURL, sessionID)
 	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err != nil {
 		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
@@ -183,7 +182,7 @@ func (c *Client) handleSessionDelete(ctx context.Context, sessionID string, ch c
 	ch <- successPayload
 }
 
-func (c *Client) handlePrompt(ctx context.Context, sessionID string, data json.RawMessage, ch chan<- []byte) {
+func (c *Client) handlePrompt(ctx context.Context, baseURL, sessionID string, data json.RawMessage, ch chan<- []byte) {
 	var promptData PromptData
 	json.Unmarshal(data, &promptData)
 
@@ -194,7 +193,7 @@ func (c *Client) handlePrompt(ctx context.Context, sessionID string, data json.R
 	}
 
 	body, _ := json.Marshal(promptReq)
-	url := fmt.Sprintf("%s/session/%s/message", c.baseURL, sessionID)
+	url := fmt.Sprintf("%s/session/%s/message", baseURL, sessionID)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -221,7 +220,6 @@ func (c *Client) handlePrompt(ctx context.Context, sessionID string, data json.R
 		return
 	}
 
-	// Send text parts as stream chunks
 	for _, part := range ocResp.Parts {
 		if part.Type == "text" && part.Text != "" {
 			textPayload, _ := json.Marshal(map[string]string{"text": part.Text})
@@ -230,9 +228,16 @@ func (c *Client) handlePrompt(ctx context.Context, sessionID string, data json.R
 	}
 }
 
-// Health checks if OpenCode is reachable
 func (c *Client) Health(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/global/health", nil)
+	return c.HealthWithURL(ctx, c.defaultURL)
+}
+
+func (c *Client) HealthWithURL(ctx context.Context, baseURL string) error {
+	if baseURL == "" {
+		baseURL = c.defaultURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/global/health", nil)
 	if err != nil {
 		return err
 	}

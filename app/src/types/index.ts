@@ -17,7 +17,7 @@ export interface Session {
 }
 
 export interface ClientMessage {
-  type: 'ping' | 'session.create' | 'session.list' | 'session.messages' | 'session.delete' | 'prompt' | 'sync' | 'ack';
+  type: 'ping' | 'session.create' | 'session.list' | 'session.messages' | 'session.delete' | 'prompt' | 'sync' | 'ack' | 'project.list' | 'project.start' | 'project.stop';
   id: string;
   payload: {
     sessionId?: string;
@@ -25,6 +25,8 @@ export interface ClientMessage {
     title?: string;
     lastAckId?: number;
     msgId?: number;
+    path?: string;
+    projectPath?: string;
   };
 }
 
@@ -60,11 +62,18 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'err
 
 export type Theme = 'dark' | 'light' | 'system';
 
+export type ProjectStatus = 'stopped' | 'starting' | 'running' | 'error';
+
 export interface Project {
   path: string;
   name: string;
-  sessionCount: number;
-  lastUpdated: number;
+  port: number;
+  tmuxSession: string;
+  status: ProjectStatus;
+  error?: string;
+  startedAt?: string;
+  sessionCount?: number;
+  lastUpdated?: number;
 }
 
 export interface AppSettings {
