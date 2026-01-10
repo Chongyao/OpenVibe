@@ -186,27 +186,37 @@ func (c *Client) handleRequest(ctx context.Context, msg Message) {
 		return
 	}
 
-	// Call handler
 	streamCh, err := c.handler.HandleRequest(ctx, req.SessionID, req.Action, req.Data)
 	if err != nil {
 		c.sendError(msg.ID, err.Error())
 		return
 	}
 
-	// Forward stream chunks
-	for chunk := range streamCh {
+	isStreaming := req.Action == "prompt"
+
+	if isStreaming {
+		for chunk := range streamCh {
+			c.conn.WriteJSON(Message{
+				Type:    MsgTypeStream,
+				ID:      msg.ID,
+				Payload: chunk,
+			})
+		}
 		c.conn.WriteJSON(Message{
-			Type:    MsgTypeStream,
+			Type: MsgTypeStreamEnd,
+			ID:   msg.ID,
+		})
+	} else {
+		var responseData []byte
+		for chunk := range streamCh {
+			responseData = chunk
+		}
+		c.conn.WriteJSON(Message{
+			Type:    MsgTypeResponse,
 			ID:      msg.ID,
-			Payload: chunk,
+			Payload: responseData,
 		})
 	}
-
-	// Send stream end
-	c.conn.WriteJSON(Message{
-		Type: MsgTypeStreamEnd,
-		ID:   msg.ID,
-	})
 }
 
 func (c *Client) sendError(requestID, errMsg string) {

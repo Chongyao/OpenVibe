@@ -243,9 +243,8 @@ func (c *Client) handleSessionList(requestID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Try agent first
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
-		c.handleViaAgent(ctx, requestID, agent.ID, "session.list", nil)
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.list", "", nil)
 		return
 	}
 
@@ -272,10 +271,9 @@ func (c *Client) handleSessionCreate(requestID string, title string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Try agent first
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
 		data, _ := json.Marshal(map[string]string{"title": title})
-		c.handleViaAgent(ctx, requestID, agent.ID, "session.create", data)
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.create", "", data)
 		return
 	}
 
@@ -312,7 +310,7 @@ func (c *Client) handleSessionMessages(requestID string, sessionID string) {
 	}
 
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
-		c.handleViaAgent(ctx, requestID, agent.ID, "session.messages", nil)
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.messages", sessionID, nil)
 		return
 	}
 
@@ -410,9 +408,13 @@ func (c *Client) handleSync(requestID string, payload SyncPayload) {
 	})
 }
 
-func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action string, data json.RawMessage) {
+func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action string, sessionID string, data json.RawMessage) {
+	if sessionID == "" {
+		sessionID = c.sessionID
+	}
+
 	req := &tunnel.RequestPayload{
-		SessionID: c.sessionID,
+		SessionID: sessionID,
 		Action:    action,
 		Data:      data,
 	}
@@ -423,15 +425,35 @@ func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action 
 		return
 	}
 
-	// Wait for single response
 	select {
 	case msg := <-respCh:
 		if msg != nil {
-			c.sendMessage(ServerMessage{
-				Type:    "response",
-				ID:      requestID,
-				Payload: json.RawMessage(msg.Payload),
-			})
+			switch msg.Type {
+			case tunnel.MsgTypeResponse:
+				c.sendMessage(ServerMessage{
+					Type:    "response",
+					ID:      requestID,
+					Payload: json.RawMessage(msg.Payload),
+				})
+			case tunnel.MsgTypeStream:
+				c.sendMessage(ServerMessage{
+					Type:    "response",
+					ID:      requestID,
+					Payload: json.RawMessage(msg.Payload),
+				})
+			case tunnel.MsgTypeError:
+				c.sendMessage(ServerMessage{
+					Type:    "error",
+					ID:      requestID,
+					Payload: json.RawMessage(msg.Payload),
+				})
+			default:
+				c.sendMessage(ServerMessage{
+					Type:    "response",
+					ID:      requestID,
+					Payload: json.RawMessage(msg.Payload),
+				})
+			}
 		}
 	case <-ctx.Done():
 		c.sendError(requestID, "Request timeout")
