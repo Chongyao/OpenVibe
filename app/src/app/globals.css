@@ -40,13 +40,19 @@
 
 html, body {
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  position: fixed;
+  width: 100%;
+  top: 0;
+  left: 0;
 }
 
 /* Scrollbar styling */
@@ -159,10 +165,12 @@ body {
 /* Safe area padding for mobile */
 .safe-area-top {
   padding-top: env(safe-area-inset-top, 0);
+  flex-shrink: 0;
 }
 
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);
+  flex-shrink: 0;
 }
 
 /* Message bubble styles */
@@ -797,6 +805,7 @@ body {
   border-top: 1px solid var(--border-color);
   background: var(--bg-secondary);
   padding: 0.5rem 0;
+  flex-shrink: 0;
 }
 
 .macro-deck-scroll {

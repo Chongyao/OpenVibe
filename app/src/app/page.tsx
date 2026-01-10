@@ -285,7 +285,7 @@ export default function Home() {
   }, [isReady, handleSend]);
 
   return (
-    <div className="flex h-screen bg-[var(--bg-primary)]">
+    <div className="flex h-screen h-[100dvh] bg-[var(--bg-primary)]">
       <SessionSidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
@@ -308,8 +308,8 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-4xl mx-auto px-4 py-6">
+        <main className="flex-1 overflow-y-auto overscroll-contain">
+          <div className="max-w-4xl mx-auto px-4 py-6 pb-4">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full min-h-[50vh] text-center">
                 <div className="animate-slide-up">
