@@ -75,6 +75,8 @@ func (c *Client) HandleRequest(ctx context.Context, sessionID, action string, da
 			c.handleSessionList(ctx, ch)
 		case "session.messages":
 			c.handleSessionMessages(ctx, sessionID, ch)
+		case "session.delete":
+			c.handleSessionDelete(ctx, sessionID, ch)
 		case "prompt":
 			c.handlePrompt(ctx, sessionID, data, ch)
 		default:
@@ -151,6 +153,34 @@ func (c *Client) handleSessionMessages(ctx context.Context, sessionID string, ch
 
 	respBody, _ := io.ReadAll(resp.Body)
 	ch <- respBody
+}
+
+func (c *Client) handleSessionDelete(ctx context.Context, sessionID string, ch chan<- []byte) {
+	url := fmt.Sprintf("%s/session/%s", c.baseURL, sessionID)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		ch <- errPayload
+		return
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		ch <- errPayload
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		errPayload, _ := json.Marshal(map[string]string{"error": string(errBody)})
+		ch <- errPayload
+		return
+	}
+
+	successPayload, _ := json.Marshal(map[string]interface{}{"success": true, "sessionId": sessionID})
+	ch <- successPayload
 }
 
 func (c *Client) handlePrompt(ctx context.Context, sessionID string, data json.RawMessage, ch chan<- []byte) {

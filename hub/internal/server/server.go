@@ -234,6 +234,14 @@ func (c *Client) handleMessage(data []byte) {
 		}
 		c.handleSessionMessages(msg.ID, payload.SessionID)
 
+	case "session.delete":
+		var payload SessionPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			c.sendError(msg.ID, "Invalid payload format")
+			return
+		}
+		c.handleSessionDelete(msg.ID, payload.SessionID)
+
 	default:
 		c.sendError(msg.ID, "Unknown message type: "+msg.Type)
 	}
@@ -311,6 +319,23 @@ func (c *Client) handleSessionMessages(requestID string, sessionID string) {
 
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
 		c.handleViaAgent(ctx, requestID, agent.ID, "session.messages", sessionID, nil)
+		return
+	}
+
+	c.sendError(requestID, "No agent connected")
+}
+
+func (c *Client) handleSessionDelete(requestID string, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if sessionID == "" {
+		c.sendError(requestID, "No session ID provided")
+		return
+	}
+
+	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.delete", sessionID, nil)
 		return
 	}
 

@@ -17,7 +17,7 @@ export interface Session {
 }
 
 export interface ClientMessage {
-  type: 'ping' | 'session.create' | 'session.list' | 'session.messages' | 'prompt' | 'sync' | 'ack';
+  type: 'ping' | 'session.create' | 'session.list' | 'session.messages' | 'session.delete' | 'prompt' | 'sync' | 'ack';
   id: string;
   payload: {
     sessionId?: string;

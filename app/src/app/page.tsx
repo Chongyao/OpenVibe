@@ -66,6 +66,7 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMessageId = useRef<string | null>(null);
   const hasInitialized = useRef(false);
+  const pendingSessionMessagesRequest = useRef<{ requestId: string; sessionId: string } | null>(null);
 
   useEffect(() => {
     if (!hasInitialized.current) {
@@ -104,55 +105,63 @@ export default function Home() {
         const payload = msg.payload;
         
         if (Array.isArray(payload)) {
-          const firstItem = payload[0];
-          
-          if (firstItem && 'info' in firstItem && 'parts' in firstItem) {
-            interface OpenCodeMessage {
-              info: { id: string; role: 'user' | 'assistant'; time?: { created: number } };
-              parts: Array<{ type: string; text?: string }>;
-            }
-            const ocMessages = payload as OpenCodeMessage[];
-            const convertedMessages: Message[] = [];
+          const pending = pendingSessionMessagesRequest.current;
+          if (pending && msg.id === pending.requestId) {
+            const firstItem = payload[0];
+            const isMessageResponse = !firstItem || ('info' in firstItem && 'parts' in firstItem);
             
-            for (const ocMsg of ocMessages) {
-              const textParts = ocMsg.parts.filter(p => p.type === 'text' && p.text);
-              if (textParts.length > 0) {
-                const content = textParts.map(p => p.text).join('\n');
-                convertedMessages.push({
-                  id: ocMsg.info.id,
-                  role: ocMsg.info.role,
-                  content,
-                  timestamp: ocMsg.info.time?.created || Date.now(),
-                });
+            if (isMessageResponse) {
+              interface OpenCodeMessage {
+                info: { id: string; role: 'user' | 'assistant'; time?: { created: number } };
+                parts: Array<{ type: string; text?: string }>;
               }
+              const ocMessages = payload as OpenCodeMessage[];
+              const convertedMessages: Message[] = [];
+              
+              for (const ocMsg of ocMessages) {
+                const textParts = ocMsg.parts.filter(p => p.type === 'text' && p.text);
+                if (textParts.length > 0) {
+                  const content = textParts.map(p => p.text).join('\n');
+                  convertedMessages.push({
+                    id: ocMsg.info.id,
+                    role: ocMsg.info.role,
+                    content,
+                    timestamp: ocMsg.info.time?.created || Date.now(),
+                  });
+                }
+              }
+              
+              if (pending.sessionId === currentSessionId) {
+                setMessages(convertedMessages);
+                updateSessionMessages(pending.sessionId, convertedMessages);
+              }
+              pendingSessionMessagesRequest.current = null;
+              return;
             }
+          }
+          
+          const firstItem = payload[0];
+          if (firstItem && 'id' in firstItem) {
+            interface ServerSession {
+              id: string;
+              title: string;
+              directory?: string;
+              time?: { created: number; updated: number };
+            }
+            const serverSessions = payload as ServerSession[];
+            const mappedSessions: Session[] = serverSessions.map(s => ({
+              id: s.id,
+              title: s.title || 'New Chat',
+              createdAt: s.time?.created || Date.now(),
+              messages: [],
+              directory: s.directory,
+              time: s.time,
+            }));
+            setSessions(mappedSessions);
             
-            setMessages(convertedMessages);
-            if (currentSessionId) {
-              updateSessionMessages(currentSessionId, convertedMessages);
+            if (mappedSessions.length > 0 && !currentSessionId) {
+              setCurrentSessionId(mappedSessions[0].id);
             }
-            return;
-          }
-          
-          interface ServerSession {
-            id: string;
-            title: string;
-            directory?: string;
-            time?: { created: number; updated: number };
-          }
-          const serverSessions = payload as ServerSession[];
-          const mappedSessions: Session[] = serverSessions.map(s => ({
-            id: s.id,
-            title: s.title || 'New Chat',
-            createdAt: s.time?.created || Date.now(),
-            messages: [],
-            directory: s.directory,
-            time: s.time,
-          }));
-          setSessions(mappedSessions);
-          
-          if (mappedSessions.length > 0 && !currentSessionId) {
-            setCurrentSessionId(mappedSessions[0].id);
           }
           return;
         }
@@ -279,9 +288,11 @@ export default function Home() {
     if (currentSessionId && state === 'connected' && messages.length === 0) {
       const session = sessions.find(s => s.id === currentSessionId);
       if (session && session.messages.length === 0) {
+        const requestId = generateId();
+        pendingSessionMessagesRequest.current = { requestId, sessionId: currentSessionId };
         send({
           type: 'session.messages',
-          id: generateId(),
+          id: requestId,
           payload: { sessionId: currentSessionId },
         });
       }
@@ -308,9 +319,11 @@ export default function Home() {
       } else {
         setMessages([]);
         if (state === 'connected') {
+          const requestId = generateId();
+          pendingSessionMessagesRequest.current = { requestId, sessionId };
           send({
             type: 'session.messages',
-            id: generateId(),
+            id: requestId,
             payload: { sessionId },
           });
         }
@@ -319,6 +332,14 @@ export default function Home() {
   }, [sessions, state, send]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
+    if (state === 'connected') {
+      send({
+        type: 'session.delete',
+        id: generateId(),
+        payload: { sessionId },
+      });
+    }
+    
     setSessions(prev => {
       const updated = prev.filter(s => s.id !== sessionId);
       saveSessions(updated);
@@ -328,7 +349,7 @@ export default function Home() {
       setCurrentSessionId(null);
       setMessages([]);
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, state, send]);
 
   const handleSend = useCallback((content: string) => {
     if (!currentSessionId || state !== 'connected') return;
