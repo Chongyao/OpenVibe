@@ -265,3 +265,57 @@ if agent, ok := tunnelMgr.GetAnyAgent(); !ok {
 2. Verify `curl http://hub:8080/agents` shows connected agent
 3. Test with Node.js WebSocket client to isolate browser issues
 4. Hard refresh browser (Ctrl+Shift+R) to clear cache
+
+### 5. 🔴 Messages Sent to Wrong OpenCode Instance (CRITICAL - UNRESOLVED)
+**Symptom**: User selects Game2048, creates session, sends message, but gets response about SmartQuant.
+
+**Root Cause**: The `prompt` request doesn't carry `projectPath`, so Agent uses default OpenCode URL.
+
+**Problem Chain**:
+1. Frontend: `handleSend` doesn't include project path in payload
+2. Hub: `handlePrompt` doesn't extract/forward project path
+3. Agent: `handleOpenCodeRequest` uses default URL when `req.ProjectPath` is empty
+
+**Key Code Location**: `agent/internal/tunnel/client.go` lines 259-278
+```go
+func (c *Client) handleOpenCodeRequest(..., req RequestPayload) {
+    if c.projectMgr != nil && req.ProjectPath != "" {  // ← ProjectPath is empty!
+        url, err := c.projectMgr.GetOpenCodeURL(req.ProjectPath)
+        // ...
+    }
+    // Falls through to default URL
+}
+```
+
+**Suggested Fix Options**:
+1. **Option A**: Frontend passes `projectPath` in every `prompt` request
+2. **Option B**: Hub tracks session→project mapping and adds projectPath
+3. **Option C**: Agent maintains session→project mapping from session.create
+
+**Status**: Partially fixed for `session.create`, but `prompt` still broken.
+
+### 6. sendRef May Be Null When Calling useProjects
+**Symptom**: Clicking Start button does nothing, no error shown.
+
+**Root Cause**: `sendRef.current` is set in `useEffect` which runs after first render. If user clicks before effect runs, send is null.
+
+**Solution Applied**: Added null check with console.warn:
+```tsx
+send: (msg) => {
+  const result = sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage);
+  if (result === undefined) {
+    console.warn('[useProjects] WebSocket not ready, message not sent:', msg.type);
+  }
+}
+```
+
+### 7. Session Directory Not Used for Routing
+**Symptom**: Session created with correct directory, but subsequent messages go to wrong project.
+
+**Root Cause**: OpenCode API doesn't persist or return `directory` field. Session's directory is only known at creation time, not stored.
+
+**Impact**: 
+- `session.create` with directory works
+- Subsequent `prompt` on that session doesn't know which project it belongs to
+
+**Suggested Fix**: Track session→projectPath mapping in Agent or Hub.

@@ -59,8 +59,9 @@ type ClientMessage struct {
 }
 
 type PromptPayload struct {
-	SessionID string `json:"sessionId"`
-	Content   string `json:"content"`
+	SessionID   string `json:"sessionId"`
+	Content     string `json:"content"`
+	ProjectPath string `json:"projectPath,omitempty"`
 }
 
 type SessionPayload struct {
@@ -395,7 +396,7 @@ func (c *Client) handlePrompt(requestID string, payload PromptPayload) {
 	// Try agent first, fallback to direct
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
 		data, _ := json.Marshal(map[string]string{"content": payload.Content})
-		c.handleViaAgentStream(ctx, requestID, agent.ID, sessionID, "prompt", data)
+		c.handleViaAgentStream(ctx, requestID, agent.ID, sessionID, "prompt", payload.ProjectPath, data)
 		return
 	}
 
@@ -525,11 +526,12 @@ func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action 
 	}
 }
 
-func (c *Client) handleViaAgentStream(ctx context.Context, requestID, agentID, sessionID, action string, data json.RawMessage) {
+func (c *Client) handleViaAgentStream(ctx context.Context, requestID, agentID, sessionID, action string, projectPath string, data json.RawMessage) {
 	req := &tunnel.RequestPayload{
-		SessionID: sessionID,
-		Action:    action,
-		Data:      data,
+		SessionID:   sessionID,
+		Action:      action,
+		Data:        data,
+		ProjectPath: projectPath,
 	}
 
 	respCh, err := c.server.tunnelMgr.Forward(ctx, agentID, requestID, req)

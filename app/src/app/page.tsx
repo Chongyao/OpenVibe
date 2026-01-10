@@ -246,9 +246,10 @@ export default function Home() {
       payload: {
         sessionId: currentSessionId,
         content,
+        projectPath: activeProject?.path,
       },
     });
-  }, [currentSessionId, state, send, setMessages, updateSessionMessages]);
+  }, [currentSessionId, state, send, setMessages, updateSessionMessages, activeProject]);
 
   const isReady = isConnected && currentSessionId;
   const isStreaming = messages.some(m => m.streaming);
