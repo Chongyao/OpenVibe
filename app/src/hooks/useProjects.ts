@@ -21,6 +21,7 @@ export function useProjects({ send, isConnected }: UseProjectsOptions) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingRequests = useRef<Map<string, PendingRequest>>(new Map());
+  const hasFetchedRef = useRef(false);
 
   const listProjects = useCallback(() => {
     if (!isConnected) return;
@@ -121,10 +122,16 @@ export function useProjects({ send, isConnected }: UseProjectsOptions) {
   }, []);
 
   useEffect(() => {
-    if (isConnected) {
-      listProjects();
+    if (isConnected && !hasFetchedRef.current) {
+      hasFetchedRef.current = true;
+      const id = generateId();
+      send({
+        type: 'project.list',
+        id,
+        payload: {},
+      });
     }
-  }, [isConnected, listProjects]);
+  }, [isConnected, send]);
 
   return {
     projects,

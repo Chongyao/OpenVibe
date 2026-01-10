@@ -27,6 +27,10 @@ interface UseMessageHandlerOptions {
   setIsCreatingSession: (creating: boolean) => void;
   onSessionCreated?: () => void;
   onError?: (error: string) => void;
+  /** External response handler (e.g., for project.* messages). Returns true if handled. */
+  onResponse?: (msgId: string, payload: unknown) => boolean;
+  /** External error handler for specific request IDs */
+  onErrorById?: (msgId: string, error: string) => boolean;
 }
 
 function convertOpenCodeMessages(ocMessages: OpenCodeMessage[]): Message[] {
@@ -68,6 +72,8 @@ export function useMessageHandler(options: UseMessageHandlerOptions) {
     setIsCreatingSession,
     onSessionCreated,
     onError,
+    onResponse,
+    onErrorById,
   } = options;
 
   const streamingMessageId = useRef<string | null>(null);
@@ -81,6 +87,10 @@ export function useMessageHandler(options: UseMessageHandlerOptions) {
     switch (msg.type) {
       case 'response': {
         const payload = msg.payload;
+
+        if (msg.id && onResponse?.(msg.id, payload)) {
+          return;
+        }
 
         if (Array.isArray(payload)) {
           const pending = pendingRequest.current;
@@ -184,6 +194,11 @@ export function useMessageHandler(options: UseMessageHandlerOptions) {
 
       case 'error': {
         const payload = msg.payload as { error: string };
+        
+        if (msg.id && onErrorById?.(msg.id, payload.error)) {
+          return;
+        }
+        
         setMessages(prev => [
           ...prev,
           {
@@ -210,6 +225,8 @@ export function useMessageHandler(options: UseMessageHandlerOptions) {
     setIsCreatingSession,
     onSessionCreated,
     onError,
+    onResponse,
+    onErrorById,
   ]);
 
   return { handleMessage, setPendingRequest };

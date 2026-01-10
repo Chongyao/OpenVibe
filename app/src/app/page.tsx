@@ -1,23 +1,25 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageBubble, InputBar, StatusIndicator, SessionSidebar, SettingsPanel, MacroDeck, ProjectSelector, useToast } from '@/components';
 import type { MacroAction } from '@/components';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { useProject } from '@/hooks/useProject';
+import { useProjects } from '@/hooks/useProjects';
 import { useSessionStorage } from '@/hooks/useSessionStorage';
 import { useMessageHandler } from '@/hooks/useMessageHandler';
 import { generateId } from '@/lib/utils';
-import type { Message } from '@/types';
-import { useState } from 'react';
+import type { Message, ClientMessage, ServerMessage, Project } from '@/types';
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ||
   (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
     ? `ws://${window.location.host}/ws`
     : 'ws://localhost:8080/ws');
 
+type SendFn = (msg: ClientMessage, handler?: (response: ServerMessage) => void) => boolean;
+
 export default function Home() {
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [activeProjectPath, setActiveProjectPath] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { addToast } = useToast();
 
@@ -33,6 +35,17 @@ export default function Home() {
     deleteSession,
   } = useSessionStorage();
 
+  const sendRef = useRef<SendFn | null>(null);
+
+  const {
+    projects: backendProjects,
+    loading: projectsLoading,
+    startProject,
+    stopProject,
+    handleResponse: handleProjectResponse,
+    handleError: handleProjectError,
+  } = useProjects({ send: (msg) => sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage), isConnected: true });
+
   const { handleMessage, setPendingRequest } = useMessageHandler({
     currentSessionId,
     isCreatingSession,
@@ -44,6 +57,8 @@ export default function Home() {
     setIsCreatingSession,
     onSessionCreated: () => addToast('success', 'New chat created'),
     onError: (error) => addToast('error', error),
+    onResponse: handleProjectResponse,
+    onErrorById: handleProjectError,
   });
 
   const { state, send } = useWebSocket({
@@ -58,19 +73,67 @@ export default function Home() {
     },
   });
 
+  useEffect(() => {
+    sendRef.current = send;
+  }, [send]);
+
   const isConnected = state === 'connected';
 
-  const handleProjectChange = useCallback(() => {
+  const projects = useMemo(() => {
+    if (backendProjects.length > 0) return backendProjects;
+
+    const projectMap = new Map<string, Project>();
+    for (const session of sessions) {
+      const dir = session.directory;
+      if (!dir || projectMap.has(dir)) continue;
+      projectMap.set(dir, {
+        path: dir,
+        name: dir.split('/').pop() || dir,
+        port: 0,
+        tmuxSession: '',
+        status: 'stopped',
+      });
+    }
+    return Array.from(projectMap.values());
+  }, [backendProjects, sessions]);
+
+  const activeProject = useMemo(() => {
+    if (!activeProjectPath && projects.length > 0) {
+      return projects[0];
+    }
+    if (!activeProjectPath) return null;
+    return projects.find(p => p.path === activeProjectPath) || projects[0] || null;
+  }, [projects, activeProjectPath]);
+
+  const filteredSessions = useMemo(() => {
+    const projectPath = activeProject?.path;
+    if (!projectPath) return sessions;
+    return sessions.filter(s => s.directory === projectPath);
+  }, [sessions, activeProject]);
+
+  const selectProject = useCallback((path: string) => {
+    setActiveProjectPath(path);
     setCurrentSessionId(null);
     setMessages([]);
   }, [setCurrentSessionId, setMessages]);
 
-  const {
-    projects,
-    activeProject,
-    selectProject,
-    filteredSessions,
-  } = useProject({ sessions, onProjectChange: handleProjectChange });
+  const handleStartProject = useCallback(async (path: string) => {
+    try {
+      await startProject(path);
+      addToast('success', 'Project started');
+    } catch (err) {
+      addToast('error', err instanceof Error ? err.message : 'Failed to start project');
+    }
+  }, [startProject, addToast]);
+
+  const handleStopProject = useCallback(async (path: string) => {
+    try {
+      await stopProject(path);
+      addToast('success', 'Project stopped');
+    } catch (err) {
+      addToast('error', err instanceof Error ? err.message : 'Failed to stop project');
+    }
+  }, [stopProject, addToast]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -195,7 +258,10 @@ export default function Home() {
                   projects={projects}
                   activeProject={activeProject}
                   onSelect={selectProject}
+                  onStart={handleStartProject}
+                  onStop={handleStopProject}
                   disabled={!isConnected}
+                  loading={projectsLoading}
                 />
               )}
             </div>

@@ -25,27 +25,29 @@ function saveToStorage<T>(key: string, value: T): void {
   }
 }
 
+function getInitialSessions(): Session[] {
+  return loadFromStorage<Session[]>(SESSIONS_STORAGE_KEY, []);
+}
+
+function getInitialSessionId(): string | null {
+  return loadFromStorage<string | null>(CURRENT_SESSION_KEY, null);
+}
+
 export function useSessionStorage() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [sessions, setSessions] = useState<Session[]>(getInitialSessions);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(getInitialSessionId);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const sessionId = getInitialSessionId();
+    if (!sessionId) return [];
+    const loadedSessions = getInitialSessions();
+    const session = loadedSessions.find(s => s.id === sessionId);
+    return session?.messages || [];
+  });
   const hasInitialized = useRef(false);
 
   useEffect(() => {
     if (hasInitialized.current) return;
     hasInitialized.current = true;
-
-    const loadedSessions = loadFromStorage<Session[]>(SESSIONS_STORAGE_KEY, []);
-    setSessions(loadedSessions);
-
-    const savedSessionId = loadFromStorage<string | null>(CURRENT_SESSION_KEY, null);
-    if (savedSessionId) {
-      const session = loadedSessions.find(s => s.id === savedSessionId);
-      if (session) {
-        setCurrentSessionId(savedSessionId);
-        setMessages(session.messages);
-      }
-    }
   }, []);
 
   useEffect(() => {

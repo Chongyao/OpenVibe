@@ -20,31 +20,29 @@ interface SettingsContextType {
 
 const SettingsContext = createContext<SettingsContextType | null>(null);
 
+function loadSettings(): AppSettings {
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+    }
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+  return DEFAULT_SETTINGS;
+}
+
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [loaded, setLoaded] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>(loadSettings);
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
-      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     } catch (e) {
-      console.error('Failed to load settings:', e);
+      console.error('Failed to save settings:', e);
     }
-    setLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (loaded) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-      } catch (e) {
-        console.error('Failed to save settings:', e);
-      }
-    }
-  }, [settings, loaded]);
+  }, [settings]);
 
   useEffect(() => {
     const applyTheme = (theme: Theme) => {
