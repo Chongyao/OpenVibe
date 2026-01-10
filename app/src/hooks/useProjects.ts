@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Project } from '@/types';
 import { generateId } from '@/lib/utils';
 
@@ -8,7 +8,6 @@ type SendFn = (msg: { type: string; id: string; payload: Record<string, unknown>
 
 interface UseProjectsOptions {
   send: SendFn;
-  isConnected: boolean;
 }
 
 interface PendingRequest<T = unknown> {
@@ -16,16 +15,13 @@ interface PendingRequest<T = unknown> {
   reject: (reason: unknown) => void;
 }
 
-export function useProjects({ send, isConnected }: UseProjectsOptions) {
+export function useProjects({ send }: UseProjectsOptions) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingRequests = useRef<Map<string, PendingRequest>>(new Map());
-  const hasFetchedRef = useRef(false);
 
   const listProjects = useCallback(() => {
-    if (!isConnected) return;
-    
     setLoading(true);
     setError(null);
     
@@ -39,11 +35,9 @@ export function useProjects({ send, isConnected }: UseProjectsOptions) {
     return new Promise<Project[]>((resolve, reject) => {
       pendingRequests.current.set(id, { resolve: resolve as (value: unknown) => void, reject });
     });
-  }, [send, isConnected]);
+  }, [send]);
 
   const startProject = useCallback((path: string) => {
-    if (!isConnected) return Promise.reject(new Error('Not connected'));
-    
     const id = generateId();
     send({
       type: 'project.start',
@@ -54,11 +48,9 @@ export function useProjects({ send, isConnected }: UseProjectsOptions) {
     return new Promise<Project>((resolve, reject) => {
       pendingRequests.current.set(id, { resolve: resolve as (value: unknown) => void, reject });
     });
-  }, [send, isConnected]);
+  }, [send]);
 
   const stopProject = useCallback((path: string) => {
-    if (!isConnected) return Promise.reject(new Error('Not connected'));
-    
     const id = generateId();
     send({
       type: 'project.stop',
@@ -69,7 +61,7 @@ export function useProjects({ send, isConnected }: UseProjectsOptions) {
     return new Promise<boolean>((resolve, reject) => {
       pendingRequests.current.set(id, { resolve: resolve as (value: unknown) => void, reject });
     });
-  }, [send, isConnected]);
+  }, [send]);
 
   const handleResponse = useCallback((msgId: string, payload: unknown) => {
     const pending = pendingRequests.current.get(msgId);
@@ -120,18 +112,6 @@ export function useProjects({ send, isConnected }: UseProjectsOptions) {
     pending.reject(new Error(errorMsg));
     return true;
   }, []);
-
-  useEffect(() => {
-    if (isConnected && !hasFetchedRef.current) {
-      hasFetchedRef.current = true;
-      const id = generateId();
-      send({
-        type: 'project.list',
-        id,
-        payload: {},
-      });
-    }
-  }, [isConnected, send]);
 
   return {
     projects,

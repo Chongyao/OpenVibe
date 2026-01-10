@@ -242,6 +242,12 @@ func (c *Client) handleMessage(data []byte) {
 		}
 		c.handleSessionDelete(msg.ID, payload.SessionID)
 
+	case "project.list":
+		c.handleProjectList(msg.ID)
+
+	case "project.start", "project.stop":
+		c.handleProjectAction(msg.ID, msg.Type, msg.Payload)
+
 	default:
 		c.sendError(msg.ID, "Unknown message type: "+msg.Type)
 	}
@@ -340,6 +346,30 @@ func (c *Client) handleSessionDelete(requestID string, sessionID string) {
 	}
 
 	c.sendError(requestID, "No agent connected")
+}
+
+func (c *Client) handleProjectList(requestID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
+		c.handleViaAgent(ctx, requestID, agent.ID, "project.list", "", nil)
+		return
+	}
+
+	c.sendError(requestID, "No agent connected. Please start the OpenVibe agent on your development server.")
+}
+
+func (c *Client) handleProjectAction(requestID string, action string, payload json.RawMessage) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
+		c.handleViaAgent(ctx, requestID, agent.ID, action, "", payload)
+		return
+	}
+
+	c.sendError(requestID, "No agent connected. Please start the OpenVibe agent on your development server.")
 }
 
 func (c *Client) handlePrompt(requestID string, payload PromptPayload) {

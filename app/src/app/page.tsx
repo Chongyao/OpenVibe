@@ -40,11 +40,15 @@ export default function Home() {
   const {
     projects: backendProjects,
     loading: projectsLoading,
+    listProjects,
     startProject,
     stopProject,
     handleResponse: handleProjectResponse,
     handleError: handleProjectError,
-  } = useProjects({ send: (msg) => sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage), isConnected: true });
+  } = useProjects({ send: (msg) => sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage) });
+
+  const listProjectsRef = useRef(listProjects);
+  listProjectsRef.current = listProjects;
 
   const { handleMessage, setPendingRequest } = useMessageHandler({
     currentSessionId,
@@ -65,6 +69,7 @@ export default function Home() {
     url: WS_URL,
     onMessage: handleMessage,
     onConnect: () => {
+      listProjectsRef.current();
       send({
         type: 'session.list',
         id: generateId(),
