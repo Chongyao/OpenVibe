@@ -1,267 +1,50 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { MessageBubble, InputBar, StatusIndicator, SessionSidebar, SettingsPanel, MacroDeck, ProjectSelector, useToast } from '@/components';
 import type { MacroAction } from '@/components';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useProject } from '@/hooks/useProject';
-import type { Message, Session, ServerMessage, StreamPayload } from '@/types';
+import { useSessionStorage } from '@/hooks/useSessionStorage';
+import { useMessageHandler } from '@/hooks/useMessageHandler';
+import { generateId } from '@/lib/utils';
+import type { Message } from '@/types';
+import { useState } from 'react';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ||
   (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
     ? `ws://${window.location.host}/ws`
     : 'ws://localhost:8080/ws');
 
-// Debug logging
-if (typeof window !== 'undefined') {
-  console.log('[OpenVibe] WS_URL:', WS_URL);
-  console.log('[OpenVibe] window.location:', window.location.href);
-  console.log('[OpenVibe] hostname:', window.location.hostname);
-}
-
-function generateId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-}
-
-const SESSIONS_STORAGE_KEY = 'openvibe_sessions';
-const CURRENT_SESSION_KEY = 'openvibe_current_session';
-
-function loadSessions(): Session[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem(SESSIONS_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveSessions(sessions: Session[]) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
-}
-
-function loadCurrentSessionId(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(CURRENT_SESSION_KEY);
-}
-
-function saveCurrentSessionId(sessionId: string | null) {
-  if (typeof window === 'undefined') return;
-  if (sessionId) {
-    localStorage.setItem(CURRENT_SESSION_KEY, sessionId);
-  } else {
-    localStorage.removeItem(CURRENT_SESSION_KEY);
-  }
-}
-
 export default function Home() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const streamingMessageId = useRef<string | null>(null);
-  const hasInitialized = useRef(false);
-  const pendingSessionMessagesRequest = useRef<{ requestId: string; sessionId: string } | null>(null);
   const { addToast } = useToast();
 
-  useEffect(() => {
-    if (!hasInitialized.current) {
-      hasInitialized.current = true;
-      const loaded = loadSessions();
-      setSessions(loaded);
-      
-      const savedCurrentId = loadCurrentSessionId();
-      if (savedCurrentId && loaded.find(s => s.id === savedCurrentId)) {
-        setCurrentSessionId(savedCurrentId);
-        const session = loaded.find(s => s.id === savedCurrentId);
-        if (session) {
-          setMessages(session.messages);
-        }
-      }
-    }
-  }, []);
+  const {
+    sessions,
+    setSessions,
+    currentSessionId,
+    setCurrentSessionId,
+    messages,
+    setMessages,
+    updateSessionMessages,
+    addSession,
+    deleteSession,
+  } = useSessionStorage();
 
-  useEffect(() => {
-    saveCurrentSessionId(currentSessionId);
-  }, [currentSessionId]);
-
-  const updateSessionMessages = useCallback((sessionId: string, msgs: Message[]) => {
-    setSessions(prev => {
-      const updated = prev.map(s => 
-        s.id === sessionId ? { ...s, messages: msgs } : s
-      );
-      saveSessions(updated);
-      return updated;
-    });
-  }, []);
-
-  const handleMessage = useCallback((msg: ServerMessage) => {
-    switch (msg.type) {
-      case 'response': {
-        const payload = msg.payload;
-        
-        if (Array.isArray(payload)) {
-          const pending = pendingSessionMessagesRequest.current;
-          if (pending && msg.id === pending.requestId) {
-            const firstItem = payload[0];
-            const isMessageResponse = !firstItem || ('info' in firstItem && 'parts' in firstItem);
-            
-            if (isMessageResponse) {
-              interface OpenCodeMessage {
-                info: { id: string; role: 'user' | 'assistant'; time?: { created: number } };
-                parts: Array<{ type: string; text?: string }>;
-              }
-              const ocMessages = payload as OpenCodeMessage[];
-              const convertedMessages: Message[] = [];
-              
-              for (const ocMsg of ocMessages) {
-                const textParts = ocMsg.parts.filter(p => p.type === 'text' && p.text);
-                if (textParts.length > 0) {
-                  const content = textParts.map(p => p.text).join('\n');
-                  convertedMessages.push({
-                    id: ocMsg.info.id,
-                    role: ocMsg.info.role,
-                    content,
-                    timestamp: ocMsg.info.time?.created || Date.now(),
-                  });
-                }
-              }
-              
-              if (pending.sessionId === currentSessionId) {
-                setMessages(convertedMessages);
-                updateSessionMessages(pending.sessionId, convertedMessages);
-              }
-              pendingSessionMessagesRequest.current = null;
-              return;
-            }
-          }
-          
-          const firstItem = payload[0];
-          if (firstItem && 'id' in firstItem) {
-            interface ServerSession {
-              id: string;
-              title: string;
-              directory?: string;
-              time?: { created: number; updated: number };
-            }
-            const serverSessions = payload as ServerSession[];
-            const mappedSessions: Session[] = serverSessions.map(s => ({
-              id: s.id,
-              title: s.title || 'New Chat',
-              createdAt: s.time?.created || Date.now(),
-              messages: [],
-              directory: s.directory,
-              time: s.time,
-            }));
-            setSessions(mappedSessions);
-            
-            if (mappedSessions.length > 0 && !currentSessionId) {
-              setCurrentSessionId(mappedSessions[0].id);
-            }
-          }
-          return;
-        }
-        
-        const responsePayload = payload as { id?: string; sessionId?: string; title?: string; directory?: string };
-        const sessionId = responsePayload.id || responsePayload.sessionId;
-        if (sessionId && isCreatingSession) {
-          const newSession: Session = {
-            id: sessionId,
-            title: responsePayload.title || 'New Chat',
-            createdAt: Date.now(),
-            messages: [],
-            directory: responsePayload.directory,
-          };
-          setSessions(prev => {
-            const updated = [newSession, ...prev];
-            saveSessions(updated);
-            return updated;
-          });
-          setCurrentSessionId(sessionId);
-          setMessages([]);
-          setIsCreatingSession(false);
-          addToast('success', 'New chat created');
-        }
-        break;
-      }
-      case 'stream': {
-        const payload = msg.payload as StreamPayload;
-        const messageId = msg.id;
-        
-        if (!messageId) break;
-
-        if (streamingMessageId.current !== messageId) {
-          streamingMessageId.current = messageId;
-          setMessages(prev => {
-            const updated = [
-              ...prev,
-              {
-                id: messageId,
-                role: 'assistant' as const,
-                content: payload.text,
-                timestamp: Date.now(),
-                streaming: true,
-              },
-            ];
-            if (currentSessionId) {
-              updateSessionMessages(currentSessionId, updated);
-            }
-            return updated;
-          });
-        } else {
-          setMessages(prev => {
-            const updated = prev.map(m =>
-              m.id === messageId
-                ? { ...m, content: m.content + payload.text }
-                : m
-            );
-            if (currentSessionId) {
-              updateSessionMessages(currentSessionId, updated);
-            }
-            return updated;
-          });
-        }
-        break;
-      }
-      case 'stream.end': {
-        const messageId = msg.id;
-        if (messageId) {
-          setMessages(prev => {
-            const updated = prev.map(m =>
-              m.id === messageId ? { ...m, streaming: false } : m
-            );
-            if (currentSessionId) {
-              updateSessionMessages(currentSessionId, updated);
-            }
-            return updated;
-          });
-          streamingMessageId.current = null;
-        }
-        break;
-      }
-      case 'error': {
-        const payload = msg.payload as { error: string };
-        setMessages(prev => [
-          ...prev,
-          {
-            id: generateId(),
-            role: 'assistant',
-            content: `Error: ${payload.error}`,
-            timestamp: Date.now(),
-          },
-        ]);
-        streamingMessageId.current = null;
-        setIsCreatingSession(false);
-        addToast('error', payload.error);
-        break;
-      }
-    }
-  }, [currentSessionId, isCreatingSession, updateSessionMessages, addToast]);
+  const { handleMessage, setPendingRequest } = useMessageHandler({
+    currentSessionId,
+    isCreatingSession,
+    setMessages,
+    setSessions,
+    addSession,
+    updateSessionMessages,
+    setCurrentSessionId,
+    setIsCreatingSession,
+    onSessionCreated: () => addToast('success', 'New chat created'),
+    onError: (error) => addToast('error', error),
+  });
 
   const { state, send } = useWebSocket({
     url: WS_URL,
@@ -277,10 +60,10 @@ export default function Home() {
 
   const isConnected = state === 'connected';
 
-  const handleProjectChange = useCallback((projectPath: string | null) => {
+  const handleProjectChange = useCallback(() => {
     setCurrentSessionId(null);
     setMessages([]);
-  }, []);
+  }, [setCurrentSessionId, setMessages]);
 
   const {
     projects,
@@ -298,7 +81,7 @@ export default function Home() {
       const session = sessions.find(s => s.id === currentSessionId);
       if (session && session.messages.length === 0) {
         const requestId = generateId();
-        pendingSessionMessagesRequest.current = { requestId, sessionId: currentSessionId };
+        setPendingRequest(requestId, currentSessionId);
         send({
           type: 'session.messages',
           id: requestId,
@@ -306,7 +89,7 @@ export default function Home() {
         });
       }
     }
-  }, [currentSessionId, state, sessions, messages.length, send]);
+  }, [currentSessionId, state, sessions, messages.length, send, setPendingRequest]);
 
   const handleNewSession = useCallback(() => {
     if (state !== 'connected' || isCreatingSession) return;
@@ -322,14 +105,14 @@ export default function Home() {
     const session = sessions.find(s => s.id === sessionId);
     if (session) {
       setCurrentSessionId(sessionId);
-      
+
       if (session.messages.length > 0) {
         setMessages(session.messages);
       } else {
         setMessages([]);
         if (state === 'connected') {
           const requestId = generateId();
-          pendingSessionMessagesRequest.current = { requestId, sessionId };
+          setPendingRequest(requestId, sessionId);
           send({
             type: 'session.messages',
             id: requestId,
@@ -338,7 +121,7 @@ export default function Home() {
         }
       }
     }
-  }, [sessions, state, send]);
+  }, [sessions, state, send, setCurrentSessionId, setMessages, setPendingRequest]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     if (state === 'connected') {
@@ -348,18 +131,14 @@ export default function Home() {
         payload: { sessionId },
       });
     }
-    
-    setSessions(prev => {
-      const updated = prev.filter(s => s.id !== sessionId);
-      saveSessions(updated);
-      return updated;
-    });
+
+    deleteSession(sessionId);
     if (currentSessionId === sessionId) {
       setCurrentSessionId(null);
       setMessages([]);
     }
     addToast('success', 'Chat deleted');
-  }, [currentSessionId, state, send, addToast]);
+  }, [currentSessionId, state, send, addToast, deleteSession, setCurrentSessionId, setMessages]);
 
   const handleSend = useCallback((content: string) => {
     if (!currentSessionId || state !== 'connected') return;
@@ -370,7 +149,7 @@ export default function Home() {
       content,
       timestamp: Date.now(),
     };
-    
+
     setMessages(prev => {
       const updated = [...prev, userMessage];
       updateSessionMessages(currentSessionId, updated);
@@ -385,12 +164,12 @@ export default function Home() {
         content,
       },
     });
-  }, [currentSessionId, state, send, updateSessionMessages]);
+  }, [currentSessionId, state, send, setMessages, updateSessionMessages]);
 
   const isReady = isConnected && currentSessionId;
   const isStreaming = messages.some(m => m.streaming);
 
-  const handleMacroAction = useCallback((action: MacroAction, prompt: string) => {
+  const handleMacroAction = useCallback((_action: MacroAction, prompt: string) => {
     if (!isReady) return;
     handleSend(prompt);
   }, [isReady, handleSend]);

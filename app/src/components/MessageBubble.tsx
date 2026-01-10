@@ -5,17 +5,11 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types';
+import { formatTime } from '@/lib/utils';
 import { ErrorCard, parseErrors } from './ErrorCard';
 
 interface MessageBubbleProps {
   message: Message;
-}
-
-function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 function CodeBlock({ 
