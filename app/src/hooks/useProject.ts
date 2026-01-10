@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Project, Session } from '@/types';
 
 interface UseProjectOptions {
   sessions: Session[];
+  onProjectChange?: (projectPath: string | null) => void;
 }
 
 function extractProjectsFromSessions(sessions: Session[]): Project[] {
@@ -42,25 +43,55 @@ function extractProjectsFromSessions(sessions: Session[]): Project[] {
   return projects;
 }
 
-export function useProject({ sessions }: UseProjectOptions) {
+export function useProject({ sessions, onProjectChange }: UseProjectOptions) {
   const [activeProjectPath, setActiveProjectPath] = useState<string | null>(null);
 
   const projects = useMemo(() => {
     return extractProjectsFromSessions(sessions);
   }, [sessions]);
 
+  // Auto-select first project when projects are loaded and none is selected
+  useEffect(() => {
+    if (projects.length > 0 && !activeProjectPath) {
+      const firstProjectPath = projects[0].path;
+      setActiveProjectPath(firstProjectPath);
+      onProjectChange?.(firstProjectPath);
+    }
+  }, [projects, activeProjectPath, onProjectChange]);
+
+  // If active project no longer exists in the list, reset to first available
+  useEffect(() => {
+    if (activeProjectPath && projects.length > 0) {
+      const stillExists = projects.some(p => p.path === activeProjectPath);
+      if (!stillExists) {
+        const firstProjectPath = projects[0].path;
+        setActiveProjectPath(firstProjectPath);
+        onProjectChange?.(firstProjectPath);
+      }
+    }
+  }, [projects, activeProjectPath, onProjectChange]);
+
   const activeProject = useMemo(() => {
-    if (!activeProjectPath) return null;
-    return projects.find(p => p.path === activeProjectPath) || null;
+    if (!activeProjectPath) return projects[0] || null;
+    return projects.find(p => p.path === activeProjectPath) || projects[0] || null;
   }, [projects, activeProjectPath]);
 
   const selectProject = useCallback((path: string) => {
     setActiveProjectPath(path);
-  }, []);
+    onProjectChange?.(path);
+  }, [onProjectChange]);
+
+  // Filter sessions by active project
+  const filteredSessions = useMemo(() => {
+    if (!activeProjectPath) return sessions;
+    return sessions.filter(s => s.directory === activeProjectPath);
+  }, [sessions, activeProjectPath]);
 
   return {
     projects,
     activeProject,
+    activeProjectPath,
     selectProject,
+    filteredSessions,
   };
 }

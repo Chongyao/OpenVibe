@@ -277,11 +277,17 @@ export default function Home() {
 
   const isConnected = state === 'connected';
 
+  const handleProjectChange = useCallback((projectPath: string | null) => {
+    setCurrentSessionId(null);
+    setMessages([]);
+  }, []);
+
   const {
     projects,
     activeProject,
     selectProject,
-  } = useProject({ sessions });
+    filteredSessions,
+  } = useProject({ sessions, onProjectChange: handleProjectChange });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -392,7 +398,7 @@ export default function Home() {
   return (
     <div className="flex h-[100dvh] bg-[var(--bg-primary)] overflow-hidden">
       <SessionSidebar
-        sessions={sessions}
+        sessions={filteredSessions}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
