@@ -1,7 +1,11 @@
 'use client';
 
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useCallback, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types';
+import { ErrorCard, parseErrors } from './ErrorCard';
 
 interface MessageBubbleProps {
   message: Message;
@@ -14,67 +18,154 @@ function formatTime(timestamp: number): string {
   });
 }
 
-function parseContent(content: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match;
-  let key = 0;
+function CodeBlock({ 
+  language, 
+  children 
+}: { 
+  language: string; 
+  children: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [children]);
 
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    // Add text before code block
-    if (match.index > lastIndex) {
-      parts.push(
-        <span key={key++}>
-          {content.slice(lastIndex, match.index)}
-        </span>
-      );
+  return (
+    <div className="code-block my-3 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 bg-[var(--bg-tertiary)] border-b border-[var(--border-color)]">
+        <span className="text-xs text-[var(--text-muted)] font-mono">{language || 'text'}</span>
+        <button
+          onClick={handleCopy}
+          className="text-xs text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors"
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+      <SyntaxHighlighter
+        style={oneDark}
+        language={language || 'text'}
+        PreTag="div"
+        customStyle={{
+          margin: 0,
+          padding: '1rem',
+          background: 'var(--bg-primary)',
+          fontSize: '0.875rem',
+        }}
+      >
+        {children}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+
+function renderContentWithErrors(content: string): React.ReactNode[] {
+  const errors = parseErrors(content);
+  
+  if (errors.length === 0) {
+    return [
+      <ReactMarkdown key="content" components={markdownComponents}>
+        {content}
+      </ReactMarkdown>
+    ];
+  }
+
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (let i = 0; i < errors.length; i++) {
+    const error = errors[i];
+    
+    if (error.startIndex > lastIndex) {
+      const textBefore = content.slice(lastIndex, error.startIndex);
+      if (textBefore.trim()) {
+        parts.push(
+          <ReactMarkdown key={`text-${i}`} components={markdownComponents}>
+            {textBefore}
+          </ReactMarkdown>
+        );
+      }
     }
 
-    // Add code block
-    const language = match[1] || 'text';
-    const code = match[2].trim();
     parts.push(
-      <div key={key++} className="code-block my-3 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 bg-[var(--bg-tertiary)] border-b border-[var(--border-color)]">
-          <span className="text-xs text-[var(--text-muted)] font-mono">{language}</span>
-          <button
-            onClick={() => navigator.clipboard.writeText(code)}
-            className="text-xs text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors"
-          >
-            Copy
-          </button>
-        </div>
-        <pre className="p-4 overflow-x-auto">
-          <code className="text-sm text-[var(--text-secondary)]">{code}</code>
-        </pre>
-      </div>
+      <ErrorCard
+        key={`error-${i}`}
+        errorType={error.type}
+        errorMessage={error.message}
+        fullTraceback={error.fullMatch}
+      />
     );
 
-    lastIndex = match.index + match[0].length;
+    lastIndex = error.endIndex;
   }
 
-  // Add remaining text
   if (lastIndex < content.length) {
-    parts.push(
-      <span key={key++}>
-        {content.slice(lastIndex)}
-      </span>
-    );
+    const textAfter = content.slice(lastIndex);
+    if (textAfter.trim()) {
+      parts.push(
+        <ReactMarkdown key="text-end" components={markdownComponents}>
+          {textAfter}
+        </ReactMarkdown>
+      );
+    }
   }
 
-  return parts.length > 0 ? parts : [<span key={0}>{content}</span>];
+  return parts;
 }
+
+const markdownComponents = {
+  code({ className, children, ...props }: { className?: string; children?: React.ReactNode }) {
+    const match = /language-(\w+)/.exec(className || '');
+    const isInline = !match && !className;
+    const codeString = String(children).replace(/\n$/, '');
+    
+    if (isInline) {
+      return (
+        <code className="inline-code" {...props}>
+          {children}
+        </code>
+      );
+    }
+    
+    return (
+      <CodeBlock language={match?.[1] || ''}>
+        {codeString}
+      </CodeBlock>
+    );
+  },
+  h1: ({ children }: { children?: React.ReactNode }) => <h1 className="markdown-h1">{children}</h1>,
+  h2: ({ children }: { children?: React.ReactNode }) => <h2 className="markdown-h2">{children}</h2>,
+  h3: ({ children }: { children?: React.ReactNode }) => <h3 className="markdown-h3">{children}</h3>,
+  h4: ({ children }: { children?: React.ReactNode }) => <h4 className="markdown-h4">{children}</h4>,
+  h5: ({ children }: { children?: React.ReactNode }) => <h5 className="markdown-h5">{children}</h5>,
+  h6: ({ children }: { children?: React.ReactNode }) => <h6 className="markdown-h6">{children}</h6>,
+  ul: ({ children }: { children?: React.ReactNode }) => <ul className="markdown-ul">{children}</ul>,
+  ol: ({ children }: { children?: React.ReactNode }) => <ol className="markdown-ol">{children}</ol>,
+  li: ({ children }: { children?: React.ReactNode }) => <li className="markdown-li">{children}</li>,
+  blockquote: ({ children }: { children?: React.ReactNode }) => <blockquote className="markdown-blockquote">{children}</blockquote>,
+  hr: () => <hr className="markdown-hr" />,
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="markdown-link">
+      {children}
+    </a>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => <strong className="markdown-strong">{children}</strong>,
+  em: ({ children }: { children?: React.ReactNode }) => <em className="markdown-em">{children}</em>,
+  p: ({ children }: { children?: React.ReactNode }) => <p className="markdown-p">{children}</p>,
+};
 
 export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isStreaming = message.streaming && message.role === 'assistant';
 
-  const parsedContent = useMemo(() => {
+  const content = useMemo(() => {
     if (isUser) {
       return <span>{message.content}</span>;
     }
-    return parseContent(message.content);
+    
+    return renderContentWithErrors(message.content);
   }, [message.content, isUser]);
 
   return (
@@ -88,12 +179,10 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
             : 'message-assistant rounded-bl-md'
         }`}
       >
-        {/* Message content */}
-        <div className={`text-sm sm:text-base leading-relaxed whitespace-pre-wrap break-words ${isStreaming ? 'typing-cursor' : ''}`}>
-          {parsedContent}
+        <div className={`text-sm sm:text-base leading-relaxed break-words ${isStreaming ? 'typing-cursor' : ''} ${!isUser ? 'markdown-content' : ''}`}>
+          {content}
         </div>
 
-        {/* Timestamp */}
         <div
           className={`text-xs mt-2 ${
             isUser ? 'text-[var(--bg-tertiary)]' : 'text-[var(--text-muted)]'

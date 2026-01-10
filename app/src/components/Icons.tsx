@@ -118,3 +118,10 @@ export const IconMessage = memo(function IconMessage({ className = '', size = 16
     </svg>
   );
 });
+
+export const PlusIcon = IconPlus;
+export const ChatIcon = IconMessage;
+export const TrashIcon = IconTrash;
+export const MenuIcon = IconMenu;
+export const CloseIcon = IconX;
+export const SettingsIcon = IconSettings;
