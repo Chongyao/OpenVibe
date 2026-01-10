@@ -285,7 +285,7 @@ export default function Home() {
   }, [isReady, handleSend]);
 
   return (
-    <div className="flex h-screen h-[100dvh] bg-[var(--bg-primary)]">
+    <div className="flex h-[100dvh] bg-[var(--bg-primary)] overflow-hidden">
       <SessionSidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
@@ -295,7 +295,7 @@ export default function Home() {
         isLoading={isCreatingSession}
       />
 
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0 min-h-0">
         <header className="safe-area-top glass border-b border-[var(--border-color)] flex-shrink-0">
           <div className="flex items-center justify-between px-4 py-3 max-w-4xl mx-auto">
             <div className="flex items-center gap-3 pl-12 md:pl-0">
@@ -308,7 +308,7 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overscroll-contain">
+        <main className="flex-1 overflow-y-auto min-h-0 -webkit-overflow-scrolling-touch">
           <div className="max-w-4xl mx-auto px-4 py-6 pb-4">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full min-h-[50vh] text-center">
