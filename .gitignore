@@ -1,1 +1,7 @@
 .sisyphus/
+
+# Build artifacts
+hub/hub
+hub/hub-linux
+agent/agent
+agent/agent-linux
