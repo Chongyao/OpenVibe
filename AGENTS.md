@@ -205,3 +205,63 @@ REDIS_ADDR=localhost:6379 ./scripts/test-phase2.sh
 | `OPENVIBE_AGENT_TOKEN` | Agent auth token | (none) |
 | `REDIS_PASSWORD` | Redis password | (none) |
 | `NEXT_PUBLIC_WS_URL` | WebSocket URL | auto-detect |
+
+## Known Bugs & Solutions
+
+### 1. Stale Closure in WebSocket onConnect Callback
+**Symptom**: Auto session creation fails on first load, but manual "New Chat" works.
+
+**Root Cause**: React state is stale inside `onConnect` callback. When `onConnect` fires, `state` is still `'disconnected'` due to closure, so `if (state !== 'connected')` check fails.
+
+**Solution**: Don't rely on React state inside WebSocket callbacks. Use refs or call `send()` directly since `onConnect` only fires when connected.
+
+```typescript
+// BAD: state is stale
+onConnect: () => {
+  if (state === 'connected') handleNewSession(); // state is 'disconnected' here!
+}
+
+// GOOD: onConnect only fires when connected, no state check needed
+onConnect: () => {
+  if (!isCreatingSessionRef.current) {
+    isCreatingSessionRef.current = true;
+    send({ type: 'session.create', ... });
+  }
+}
+```
+
+### 2. Browser Cache Serving Stale JavaScript
+**Symptom**: Changes deployed but browser still runs old code.
+
+**Root Cause**: Hub serves static files without `Cache-Control` headers.
+
+**Solution**: Add cache headers in Hub's static file handler:
+- HTML files: `Cache-Control: no-cache, no-store, must-revalidate`
+- Static assets (`/_next/static/`): `Cache-Control: public, max-age=31536000, immutable`
+
+### 3. Agent Disconnection Not Obvious to User
+**Symptom**: User sees "Connecting..." forever, no error message.
+
+**Root Cause**: Hub returns generic error when no agent is connected.
+
+**Solution**: Check agent status first and return friendly error message:
+```go
+if agent, ok := tunnelMgr.GetAnyAgent(); !ok {
+    sendError("No agent connected. Please start the OpenVibe agent on your development server.")
+}
+```
+
+### 4. WebSocket Close Code 1005 (No Status)
+**Symptom**: Hub logs show `websocket: close 1005 (no status)` immediately after client connects.
+
+**Possible Causes**:
+1. Client JavaScript error before WebSocket fully initializes
+2. Browser security policy blocking WebSocket
+3. Network/firewall issues
+4. Stale cached JavaScript (see bug #2)
+
+**Debug Steps**:
+1. Check browser console for JS errors
+2. Verify `curl http://hub:8080/agents` shows connected agent
+3. Test with Node.js WebSocket client to isolate browser issues
+4. Hard refresh browser (Ctrl+Shift+R) to clear cache
