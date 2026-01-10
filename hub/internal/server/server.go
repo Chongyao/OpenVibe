@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/openvibe/hub/internal/buffer"
 	"github.com/openvibe/hub/internal/config"
 	"github.com/openvibe/hub/internal/proxy"
+	"github.com/openvibe/hub/internal/tunnel"
 )
 
 const (
@@ -34,10 +36,12 @@ var (
 )
 
 type Server struct {
-	config  *config.Config
-	proxy   *proxy.OpenCodeProxy
-	clients map[*Client]bool
-	mu      sync.RWMutex
+	config    *config.Config
+	proxy     *proxy.OpenCodeProxy
+	buffer    buffer.Buffer
+	tunnelMgr *tunnel.Manager
+	clients   map[*Client]bool
+	mu        sync.RWMutex
 }
 
 type Client struct {
@@ -45,6 +49,7 @@ type Client struct {
 	conn      *websocket.Conn
 	send      chan []byte
 	sessionID string
+	lastAckID int64 // For Mosh-style sync
 }
 
 type ClientMessage struct {
@@ -63,17 +68,25 @@ type SessionPayload struct {
 	Title     string `json:"title,omitempty"`
 }
 
+type SyncPayload struct {
+	SessionID string `json:"sessionId"`
+	LastAckID int64  `json:"lastAckId"`
+}
+
 type ServerMessage struct {
 	Type    string      `json:"type"`
 	ID      string      `json:"id,omitempty"`
+	MsgID   int64       `json:"msgId,omitempty"` // Buffer message ID
 	Payload interface{} `json:"payload"`
 }
 
-func NewServer(cfg *config.Config, p *proxy.OpenCodeProxy) *Server {
+func NewServer(cfg *config.Config, p *proxy.OpenCodeProxy, buf buffer.Buffer, tm *tunnel.Manager) *Server {
 	return &Server{
-		config:  cfg,
-		proxy:   p,
-		clients: make(map[*Client]bool),
+		config:    cfg,
+		proxy:     p,
+		buffer:    buf,
+		tunnelMgr: tm,
+		clients:   make(map[*Client]bool),
 	}
 }
 
@@ -196,6 +209,23 @@ func (c *Client) handleMessage(data []byte) {
 		}
 		c.handlePrompt(msg.ID, payload)
 
+	case "sync":
+		var payload SyncPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			c.sendError(msg.ID, "Invalid payload format")
+			return
+		}
+		c.handleSync(msg.ID, payload)
+
+	case "ack":
+		// Client acknowledging receipt of message
+		var payload struct {
+			MsgID int64 `json:"msgId"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			c.lastAckID = payload.MsgID
+		}
+
 	default:
 		c.sendError(msg.ID, "Unknown message type: "+msg.Type)
 	}
@@ -204,6 +234,12 @@ func (c *Client) handleMessage(data []byte) {
 func (c *Client) handleSessionList(requestID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Try agent first, fallback to direct
+	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.list", nil)
+		return
+	}
 
 	sessions, err := c.server.proxy.ListSessions(ctx)
 	if err != nil {
@@ -221,6 +257,13 @@ func (c *Client) handleSessionList(requestID string) {
 func (c *Client) handleSessionCreate(requestID string, title string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Try agent first, fallback to direct
+	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
+		data, _ := json.Marshal(map[string]string{"title": title})
+		c.handleViaAgent(ctx, requestID, agent.ID, "session.create", data)
+		return
+	}
 
 	session, err := c.server.proxy.CreateSession(ctx, title)
 	if err != nil {
@@ -253,10 +296,27 @@ func (c *Client) handlePrompt(requestID string, payload PromptPayload) {
 
 	ctx := context.Background()
 
+	// Try agent first, fallback to direct
+	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
+		data, _ := json.Marshal(map[string]string{"content": payload.Content})
+		c.handleViaAgentStream(ctx, requestID, agent.ID, sessionID, "prompt", data)
+		return
+	}
+
+	// Direct mode (fallback)
 	err := c.server.proxy.SendMessage(ctx, sessionID, payload.Content, func(eventType string, data []byte) error {
+		// Buffer the message
+		bufMsg := buffer.Message{
+			Type:      "stream",
+			RequestID: requestID,
+			Payload:   data,
+		}
+		msgID, _ := c.server.buffer.Push(ctx, sessionID, bufMsg)
+
 		c.sendMessage(ServerMessage{
 			Type:    "stream",
 			ID:      requestID,
+			MsgID:   msgID,
 			Payload: json.RawMessage(data),
 		})
 		return nil
@@ -267,11 +327,136 @@ func (c *Client) handlePrompt(requestID string, payload PromptPayload) {
 		return
 	}
 
+	// Buffer and send stream end
+	bufMsg := buffer.Message{
+		Type:      "stream.end",
+		RequestID: requestID,
+	}
+	msgID, _ := c.server.buffer.Push(ctx, sessionID, bufMsg)
+
 	c.sendMessage(ServerMessage{
 		Type:    "stream.end",
 		ID:      requestID,
+		MsgID:   msgID,
 		Payload: nil,
 	})
+}
+
+func (c *Client) handleSync(requestID string, payload SyncPayload) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sessionID := payload.SessionID
+	if sessionID == "" {
+		sessionID = c.sessionID
+	}
+
+	// Get messages since lastAckID
+	messages, err := c.server.buffer.GetSince(ctx, sessionID, payload.LastAckID)
+	if err != nil {
+		c.sendError(requestID, "Failed to sync: "+err.Error())
+		return
+	}
+
+	latestID, _ := c.server.buffer.GetLatestID(ctx, sessionID)
+
+	c.sendMessage(ServerMessage{
+		Type: "sync.batch",
+		ID:   requestID,
+		Payload: map[string]interface{}{
+			"messages": messages,
+			"latestId": latestID,
+		},
+	})
+}
+
+func (c *Client) handleViaAgent(ctx context.Context, requestID, agentID, action string, data json.RawMessage) {
+	req := &tunnel.RequestPayload{
+		SessionID: c.sessionID,
+		Action:    action,
+		Data:      data,
+	}
+
+	respCh, err := c.server.tunnelMgr.Forward(ctx, agentID, requestID, req)
+	if err != nil {
+		c.sendError(requestID, "Agent forward failed: "+err.Error())
+		return
+	}
+
+	// Wait for single response
+	select {
+	case msg := <-respCh:
+		if msg != nil {
+			c.sendMessage(ServerMessage{
+				Type:    "response",
+				ID:      requestID,
+				Payload: json.RawMessage(msg.Payload),
+			})
+		}
+	case <-ctx.Done():
+		c.sendError(requestID, "Request timeout")
+	}
+}
+
+func (c *Client) handleViaAgentStream(ctx context.Context, requestID, agentID, sessionID, action string, data json.RawMessage) {
+	req := &tunnel.RequestPayload{
+		SessionID: sessionID,
+		Action:    action,
+		Data:      data,
+	}
+
+	respCh, err := c.server.tunnelMgr.Forward(ctx, agentID, requestID, req)
+	if err != nil {
+		c.sendError(requestID, "Agent forward failed: "+err.Error())
+		return
+	}
+
+	// Stream responses
+	for msg := range respCh {
+		if msg == nil {
+			continue
+		}
+
+		switch msg.Type {
+		case tunnel.MsgTypeStream:
+			// Buffer the message
+			bufMsg := buffer.Message{
+				Type:      "stream",
+				RequestID: requestID,
+				Payload:   msg.Payload,
+			}
+			msgID, _ := c.server.buffer.Push(ctx, sessionID, bufMsg)
+
+			c.sendMessage(ServerMessage{
+				Type:    "stream",
+				ID:      requestID,
+				MsgID:   msgID,
+				Payload: json.RawMessage(msg.Payload),
+			})
+
+		case tunnel.MsgTypeStreamEnd:
+			// Buffer stream end
+			bufMsg := buffer.Message{
+				Type:      "stream.end",
+				RequestID: requestID,
+			}
+			msgID, _ := c.server.buffer.Push(ctx, sessionID, bufMsg)
+
+			c.sendMessage(ServerMessage{
+				Type:    "stream.end",
+				ID:      requestID,
+				MsgID:   msgID,
+				Payload: nil,
+			})
+
+		case tunnel.MsgTypeError:
+			c.sendMessage(ServerMessage{
+				Type:    "error",
+				ID:      requestID,
+				Payload: json.RawMessage(msg.Payload),
+			})
+		}
+	}
 }
 
 func (c *Client) sendMessage(msg ServerMessage) {

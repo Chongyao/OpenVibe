@@ -1,18 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ClientMessage, ConnectionState, ServerMessage } from '@/types';
+import type { ClientMessage, ConnectionState, ServerMessage, SyncBatchPayload } from '@/types';
 
 const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 30000];
 
 interface UseWebSocketOptions {
   url: string;
+  sessionId?: string;
   onMessage?: (msg: ServerMessage) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
 }
 
-export function useWebSocket({ url, onMessage, onConnect, onDisconnect }: UseWebSocketOptions) {
+export function useWebSocket({ url, sessionId, onMessage, onConnect, onDisconnect }: UseWebSocketOptions) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
   
@@ -21,6 +22,8 @@ export function useWebSocket({ url, onMessage, onConnect, onDisconnect }: UseWeb
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageHandlersRef = useRef<Map<string, (msg: ServerMessage) => void>>(new Map());
   const mountedRef = useRef(true);
+  const lastAckIDRef = useRef<number>(0);
+  const sessionIdRef = useRef<string | undefined>(sessionId);
   
   // Refs for latest callbacks (updated in effect)
   const callbacksRef = useRef({ onMessage, onConnect, onDisconnect });
@@ -28,6 +31,27 @@ export function useWebSocket({ url, onMessage, onConnect, onDisconnect }: UseWeb
   useEffect(() => {
     callbacksRef.current = { onMessage, onConnect, onDisconnect };
   }, [onMessage, onConnect, onDisconnect]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  // Request sync after reconnection
+  const requestSync = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!sessionIdRef.current || lastAckIDRef.current === 0) return;
+
+    const syncMsg: ClientMessage = {
+      type: 'sync',
+      id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      payload: {
+        sessionId: sessionIdRef.current,
+        lastAckId: lastAckIDRef.current,
+      },
+    };
+
+    wsRef.current.send(JSON.stringify(syncMsg));
+  }, []);
 
   // Main connection effect
   useEffect(() => {
@@ -72,6 +96,12 @@ export function useWebSocket({ url, onMessage, onConnect, onDisconnect }: UseWeb
       }
       setConnectionState('connected');
       reconnectAttemptRef.current = 0;
+
+      // If reconnecting with existing session, request sync
+      if (sessionIdRef.current && lastAckIDRef.current > 0) {
+        setTimeout(requestSync, 100);
+      }
+
       callbacksRef.current.onConnect?.();
     };
 
@@ -104,6 +134,36 @@ export function useWebSocket({ url, onMessage, onConnect, onDisconnect }: UseWeb
       try {
         const msg: ServerMessage = JSON.parse(event.data);
 
+        // Track message IDs for sync
+        if (msg.msgId && msg.msgId > lastAckIDRef.current) {
+          lastAckIDRef.current = msg.msgId;
+          // Send ack
+          ws.send(JSON.stringify({
+            type: 'ack',
+            id: crypto.randomUUID?.() || `${Date.now()}`,
+            payload: { msgId: msg.msgId },
+          }));
+        }
+
+        // Handle sync.batch specially
+        if (msg.type === 'sync.batch') {
+          const payload = msg.payload as SyncBatchPayload;
+          if (payload.latestId) {
+            lastAckIDRef.current = payload.latestId;
+          }
+          // Process buffered messages
+          for (const bufferedMsg of payload.messages) {
+            const syntheticMsg: ServerMessage = {
+              type: bufferedMsg.type as ServerMessage['type'],
+              id: bufferedMsg.requestId,
+              msgId: bufferedMsg.id,
+              payload: bufferedMsg.payload,
+            };
+            callbacksRef.current.onMessage?.(syntheticMsg);
+          }
+          return;
+        }
+
         const handler = messageHandlersRef.current.get(msg.id ?? '');
         if (handler) {
           handler(msg);
@@ -129,7 +189,7 @@ export function useWebSocket({ url, onMessage, onConnect, onDisconnect }: UseWeb
       ws.close();
       wsRef.current = null;
     };
-  }, [url, reconnectTrigger]);
+  }, [url, reconnectTrigger, requestSync]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) {

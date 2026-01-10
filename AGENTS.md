@@ -1,58 +1,80 @@
 # AGENTS.md - OpenVibe Development Guide
 
-> **Status**: Greenfield | **Vision**: Mobile vibe coding terminal with E2EE + BYOS
+> **Status**: Phase 2 (Go Core) | **Vision**: Mobile vibe coding terminal with E2EE + BYOS
 
 ## Build Commands
 
 ```bash
-# Mobile App (Next.js PWA) - /app
-npm run dev                              # Dev server
-npm run build && npm run lint            # Build + lint
-npm run test -- path/to/file.test.ts     # Single test
+# Mobile App (Next.js 16 PWA) - /app
+cd app
+npm run dev                              # Dev server at :3000
+npm run build && npm run lint            # Build + lint check
+npm run lint                             # ESLint only
 
-# Relay Server (Go) - /relay
-go run ./cmd/relay                       # Run server
-go test -v ./pkg/crypto -run TestName    # Single test
+# Hub Server (Go 1.22+) - /hub
+cd hub
+go run ./cmd/hub                         # Run server at :8080
+go run ./cmd/hub --port 8080 \
+  --opencode http://localhost:4096 \
+  --redis localhost:6379 \
+  --agent-token secret                   # Full options
+go test -v ./... -run TestName           # Run single test
+go test -v -race ./...                   # All tests with race detection
 
-# Host Agent (Go) - /agent
+# Host Agent (Go 1.22+) - /agent
+cd agent
 go run ./cmd/agent                       # Run agent
-go test -v -race ./internal/pty          # Tests with race detection
+go run ./cmd/agent --hub ws://hub:8080/agent \
+  --opencode http://localhost:4096 \
+  --token secret                         # Full options
 
-# Capacitor - Mobile builds
-npx cap sync && npx cap open ios         # iOS
+# Integration test
+./scripts/test-phase2.sh                 # Full chain test
 ```
 
 ## Architecture
 
 ```
-App (Next.js+Capacitor) <--E2EE--> Blind Hub (Go+Redis) <--E2EE--> Host Agent (Go)
+App (Next.js) <--WS--> Hub (Go) <--WS Tunnel--> Agent (Go) <--HTTP--> OpenCode
+                         |
+                       Redis (消息缓冲)
 ```
 
-| Component | Stack | Directory |
-|-----------|-------|-----------|
-| Mobile App | Next.js 14+, TypeScript, TailwindCSS, Capacitor | `/app` |
-| Blind Hub | Go 1.22+, gorilla/websocket, Redis | `/relay` |
-| Host Agent | Go 1.22+, creack/pty | `/agent` |
+| Component | Stack | Directory | Status |
+|-----------|-------|-----------|--------|
+| Mobile App | Next.js 16, React 19, TailwindCSS 4 | `/app` | Active |
+| Hub Server | Go 1.22, gorilla/websocket, go-redis | `/hub` | Active |
+| Host Agent | Go 1.22, gorilla/websocket | `/agent` | Active |
 
 ## Code Style
 
 ### TypeScript/React
 
 ```typescript
-// Imports: external -> internal -> relative (alphabetized)
-import { useState } from 'react';
-import { useSession } from '@/hooks/useSession';
-import { MessageCard } from './MessageCard';
+// 'use client' for client components, file extension .tsx for JSX
+'use client';
+
+// Imports: external -> internal alias -> relative (alphabetized)
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import type { Message, ServerMessage } from '@/types';
+import { MessageBubble } from './MessageBubble';
 
 // Named exports, PascalCase components, camelCase functions
 export function TerminalView({ sessionId }: Props) {
-  if (!sessionId) return null;  // Early returns
+  if (!sessionId) return null;  // Early returns first
   return <div>...</div>;
 }
 
-// Types: interface for objects, type for unions
-interface Message { id: string; content: string; }
-type State = 'connecting' | 'connected' | 'disconnected';
+// Use memo for performance-critical components
+export const MessageBubble = memo(function MessageBubble({ message }: Props) {
+  const parsedContent = useMemo(() => parseContent(message.content), [message.content]);
+  return <div>{parsedContent}</div>;
+});
+
+// Types: interface for objects, type for unions/literals
+interface Message { id: string; content: string; msgId?: number; }
+type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 ```
 
 ### Go
@@ -61,41 +83,46 @@ type State = 'connecting' | 'connected' | 'disconnected';
 // Imports: stdlib -> external -> internal (goimports)
 import (
     "context"
+    "fmt"
+    
     "github.com/gorilla/websocket"
-    "github.com/openvibe/agent/internal/pty"
+    "github.com/redis/go-redis/v9"
+    
+    "github.com/openvibe/hub/internal/buffer"
 )
 
-// MixedCaps exported, mixedCaps unexported, -er interfaces
-type Encryptor interface {
-    Encrypt(ctx context.Context, data []byte) ([]byte, error)
+// Pointer receiver for mutations, wrap errors with context
+func (b *RedisBuffer) Push(ctx context.Context, sessionID string, msg Message) (int64, error) {
+    id, err := b.client.Incr(ctx, b.keyMsgID(sessionID)).Result()
+    if err != nil {
+        return 0, fmt.Errorf("failed to get next id: %w", err)
+    }
+    return id, nil
 }
 
-// Pointer receiver for mutations, wrap errors with context
-func (s *Session) Send(msg []byte) error {
-    if err != nil {
-        return fmt.Errorf("session send: %w", err)
+// Constructor pattern: New* returns pointer
+func NewManager(cfg *Config) *Manager {
+    return &Manager{
+        config: cfg,
+        agents: make(map[string]*Agent),
     }
 }
 ```
 
-## Security (CRITICAL)
+## Security (Phase 3 Target)
 
-**Crypto**: X25519 key exchange + AES-256-GCM + HKDF-SHA256
+**Target Crypto**: X25519 key exchange + AES-256-GCM + HKDF-SHA256
 
 ### Rules (NEVER VIOLATE)
-
-1. **Never log plaintext** - encrypt before logging
-2. **Never store keys plaintext** - use OS keychain
-3. **Constant-time comparison** - `subtle.ConstantTimeCompare`
-4. **Zero secrets on exit** - explicit memory zeroing
-5. **Validate before decrypt** - check message structure first
+1. **Never log plaintext** - encrypt before logging sensitive data
+2. **Constant-time comparison** - `subtle.ConstantTimeCompare` for tokens
+3. **Validate before process** - check message structure first
 
 ```go
-// Good: constant-time
-if subtle.ConstantTimeCompare(expected, actual) != 1 { return ErrAuth }
-
-// Bad: timing attack
-if string(expected) == string(actual) { ... }
+// Good: constant-time token comparison
+if subtle.ConstantTimeCompare([]byte(payload.Token), []byte(cfg.AgentToken)) != 1 {
+    return ErrUnauthorized
+}
 ```
 
 ## UI/UX - Cyberpunk Console
@@ -103,55 +130,78 @@ if string(expected) == string(actual) { ... }
 ```css
 :root {
   --bg-primary: #09090b;      /* Deep space gray */
+  --bg-secondary: #18181b;    /* Card background */
   --accent-primary: #00ff9d;  /* Neon green */
   --accent-error: #ff0055;    /* Cyber red */
 }
 ```
 
-- No scrollbars (gesture-based)
-- Haptic feedback on actions
-- Respect iOS safe areas
-- Dynamic Macro Deck buttons
+## Key Protocols
 
-## Testing
-
+### Mosh-Style Sync (断点续传)
 ```typescript
-// Vitest + RTL
-it('encrypts round-trip', async () => {
-  const ciphertext = await service.encrypt(plaintext);
-  expect(await service.decrypt(ciphertext)).toEqual(plaintext);
-});
+// Client tracks lastAckId, requests sync on reconnect
+{ type: 'sync', payload: { sessionId, lastAckId: 1000 } }
+// Server returns missed messages
+{ type: 'sync.batch', payload: { messages: [...], latestId: 1050 } }
 ```
 
+### Agent Tunnel
 ```go
-// Table-driven
-func TestEncrypt(t *testing.T) {
-    tests := []struct{ name string; input []byte; wantErr bool }{
-        {"empty", []byte{}, false},
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) { ... })
-    }
-}
+// Agent registers with Hub
+{ type: 'agent.register', payload: { agentId, token, capabilities } }
+// Hub forwards requests
+{ type: 'agent.request', id: 'req-1', payload: { sessionId, action, data } }
+// Agent streams response
+{ type: 'agent.stream', id: 'req-1', payload: { text: '...' } }
 ```
-
-## Git
-
-- Branches: `feat/`, `fix/`, `refactor/`, `docs/`
-- Commits: Conventional (`feat:`, `fix:`, `chore:`)
-- PRs: <400 lines, no force push to `main`
 
 ## File Structure
 
 ```
-app/src/{components,hooks,lib,app}/
-relay/{cmd/relay,internal,pkg}/
-agent/{cmd/agent,internal,pkg}/
+app/src/
+  app/           # Next.js App Router pages
+  components/    # Reusable UI components
+  hooks/         # Custom React hooks (useWebSocket, useSettings)
+  types/         # TypeScript interfaces
+
+hub/
+  cmd/hub/       # Entry point
+  internal/
+    buffer/      # Redis message buffering
+    config/      # Configuration
+    proxy/       # OpenCode HTTP proxy (fallback)
+    server/      # WebSocket server
+    tunnel/      # Agent tunnel manager
+
+agent/
+  cmd/agent/     # Entry point
+  internal/
+    opencode/    # OpenCode HTTP client
+    tunnel/      # Tunnel client
 ```
 
-## Key Decisions (from init.md)
+## Git Conventions
 
-- All App<->Agent traffic is E2EE; Hub only sees ciphertext
-- WebSocket for all real-time (not HTTP)
-- Mosh-style state sync (last-ack-ID), not TCP streaming
-- Design for flaky mobile networks - always handle reconnection
+- Branches: `feat/`, `fix/`, `refactor/`, `docs/`
+- Commits: Conventional (`feat:`, `fix:`, `chore:`, `refactor:`)
+- PRs: <400 lines changed, no force push to `main`
+
+## Testing
+
+```bash
+# Hub integration test
+./scripts/test-phase2.sh
+
+# With Redis
+REDIS_ADDR=localhost:6379 ./scripts/test-phase2.sh
+```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENVIBE_TOKEN` | Client auth token | (none) |
+| `OPENVIBE_AGENT_TOKEN` | Agent auth token | (none) |
+| `REDIS_PASSWORD` | Redis password | (none) |
+| `NEXT_PUBLIC_WS_URL` | WebSocket URL | auto-detect |
