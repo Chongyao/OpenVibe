@@ -73,6 +73,8 @@ func (c *Client) HandleRequest(ctx context.Context, sessionID, action string, da
 			c.handleSessionCreate(ctx, data, ch)
 		case "session.list":
 			c.handleSessionList(ctx, ch)
+		case "session.messages":
+			c.handleSessionMessages(ctx, sessionID, ch)
 		case "prompt":
 			c.handlePrompt(ctx, sessionID, data, ch)
 		default:
@@ -110,12 +112,42 @@ func (c *Client) handleSessionList(ctx context.Context, ch chan<- []byte) {
 	if err != nil {
 		return
 	}
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	ch <- respBody
+}
+
+func (c *Client) handleSessionMessages(ctx context.Context, sessionID string, ch chan<- []byte) {
+	url := fmt.Sprintf("%s/session/%s/message", c.baseURL, sessionID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		ch <- errPayload
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		ch <- errPayload
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		errPayload, _ := json.Marshal(map[string]string{"error": string(errBody)})
+		ch <- errPayload
+		return
+	}
 
 	respBody, _ := io.ReadAll(resp.Body)
 	ch <- respBody

@@ -104,6 +104,36 @@ export default function Home() {
         const payload = msg.payload;
         
         if (Array.isArray(payload)) {
+          const firstItem = payload[0];
+          
+          if (firstItem && 'info' in firstItem && 'parts' in firstItem) {
+            interface OpenCodeMessage {
+              info: { id: string; role: 'user' | 'assistant'; time?: { created: number } };
+              parts: Array<{ type: string; text?: string }>;
+            }
+            const ocMessages = payload as OpenCodeMessage[];
+            const convertedMessages: Message[] = [];
+            
+            for (const ocMsg of ocMessages) {
+              const textParts = ocMsg.parts.filter(p => p.type === 'text' && p.text);
+              if (textParts.length > 0) {
+                const content = textParts.map(p => p.text).join('\n');
+                convertedMessages.push({
+                  id: ocMsg.info.id,
+                  role: ocMsg.info.role,
+                  content,
+                  timestamp: ocMsg.info.time?.created || Date.now(),
+                });
+              }
+            }
+            
+            setMessages(convertedMessages);
+            if (currentSessionId) {
+              updateSessionMessages(currentSessionId, convertedMessages);
+            }
+            return;
+          }
+          
           interface ServerSession {
             id: string;
             title: string;
@@ -245,6 +275,19 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    if (currentSessionId && state === 'connected' && messages.length === 0) {
+      const session = sessions.find(s => s.id === currentSessionId);
+      if (session && session.messages.length === 0) {
+        send({
+          type: 'session.messages',
+          id: generateId(),
+          payload: { sessionId: currentSessionId },
+        });
+      }
+    }
+  }, [currentSessionId, state, sessions, messages.length, send]);
+
   const handleNewSession = useCallback(() => {
     if (state !== 'connected' || isCreatingSession) return;
     setIsCreatingSession(true);
@@ -259,9 +302,21 @@ export default function Home() {
     const session = sessions.find(s => s.id === sessionId);
     if (session) {
       setCurrentSessionId(sessionId);
-      setMessages(session.messages);
+      
+      if (session.messages.length > 0) {
+        setMessages(session.messages);
+      } else {
+        setMessages([]);
+        if (state === 'connected') {
+          send({
+            type: 'session.messages',
+            id: generateId(),
+            payload: { sessionId },
+          });
+        }
+      }
     }
-  }, [sessions]);
+  }, [sessions, state, send]);
 
   const handleDeleteSession = useCallback((sessionId: string) => {
     setSessions(prev => {
