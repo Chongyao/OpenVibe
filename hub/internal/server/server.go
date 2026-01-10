@@ -235,9 +235,15 @@ func (c *Client) handleSessionList(requestID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Try agent first, fallback to direct
+	// Try agent first
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
 		c.handleViaAgent(ctx, requestID, agent.ID, "session.list", nil)
+		return
+	}
+
+	// Check if direct mode is available
+	if err := c.server.proxy.Health(ctx); err != nil {
+		c.sendError(requestID, "No agent connected and OpenCode is not available. Please start an agent or ensure OpenCode is running locally.")
 		return
 	}
 
@@ -258,10 +264,16 @@ func (c *Client) handleSessionCreate(requestID string, title string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Try agent first, fallback to direct
+	// Try agent first
 	if agent, ok := c.server.tunnelMgr.GetAnyAgent(); ok {
 		data, _ := json.Marshal(map[string]string{"title": title})
 		c.handleViaAgent(ctx, requestID, agent.ID, "session.create", data)
+		return
+	}
+
+	// Check if direct mode is available
+	if err := c.server.proxy.Health(ctx); err != nil {
+		c.sendError(requestID, "No agent connected. Please start the OpenVibe agent on your development server.")
 		return
 	}
 
