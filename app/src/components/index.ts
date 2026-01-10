@@ -6,3 +6,5 @@ export { SettingsPanel } from './SettingsPanel';
 export { MacroDeck } from './MacroDeck';
 export type { MacroAction } from './MacroDeck';
 export { ProjectSelector } from './ProjectSelector';
+export { ToastProvider, useToast } from './Toast';
+export type { ToastType } from './Toast';

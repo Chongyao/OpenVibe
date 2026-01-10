@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageBubble, InputBar, StatusIndicator, SessionSidebar, SettingsPanel, MacroDeck, ProjectSelector } from '@/components';
+import { MessageBubble, InputBar, StatusIndicator, SessionSidebar, SettingsPanel, MacroDeck, ProjectSelector, useToast } from '@/components';
 import type { MacroAction } from '@/components';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useProject } from '@/hooks/useProject';
@@ -67,6 +67,7 @@ export default function Home() {
   const streamingMessageId = useRef<string | null>(null);
   const hasInitialized = useRef(false);
   const pendingSessionMessagesRequest = useRef<{ requestId: string; sessionId: string } | null>(null);
+  const { addToast } = useToast();
 
   useEffect(() => {
     if (!hasInitialized.current) {
@@ -184,6 +185,7 @@ export default function Home() {
           setCurrentSessionId(sessionId);
           setMessages([]);
           setIsCreatingSession(false);
+          addToast('success', 'New chat created');
         }
         break;
       }
@@ -255,10 +257,11 @@ export default function Home() {
         ]);
         streamingMessageId.current = null;
         setIsCreatingSession(false);
+        addToast('error', payload.error);
         break;
       }
     }
-  }, [currentSessionId, isCreatingSession, updateSessionMessages]);
+  }, [currentSessionId, isCreatingSession, updateSessionMessages, addToast]);
 
   const { state, send } = useWebSocket({
     url: WS_URL,
@@ -349,7 +352,8 @@ export default function Home() {
       setCurrentSessionId(null);
       setMessages([]);
     }
-  }, [currentSessionId, state, send]);
+    addToast('success', 'Chat deleted');
+  }, [currentSessionId, state, send, addToast]);
 
   const handleSend = useCallback((content: string) => {
     if (!currentSessionId || state !== 'connected') return;
