@@ -1,8 +1,9 @@
 # Multi-Project Support Design Document
 
-> **Status**: Implementation Phase
+> **Status**: Implementation Phase (Docker Migration Planned)
 > **Created**: 2025-01-10
-> **Author**: LLM Agent (Sisyphus)
+> **Updated**: 2026-01-25
+> **Author**: LLM Agent
 
 ## 1. Problem Statement
 
@@ -16,6 +17,10 @@ Agent ---> OpenCode (port 4096, fixed to /home/zcy/workspace/projects/OpenVibe)
 Users cannot switch between projects without restarting the agent.
 
 ## 2. Solution Architecture
+
+> **Note**: 当前使用 tmux 管理进程，计划迁移到 Docker 容器化方案。
+
+### 2.1 当前架构 (tmux)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -31,7 +36,7 @@ Users cannot switch between projects without restarting the agent.
 │                               │                                     │
 │                               ▼                                     │
 │                    ┌─────────────────────────────────────┐         │
-│                    │        OpenCode Instances           │         │
+│                    │     OpenCode Instances (tmux)       │         │
 │                    │                                     │         │
 │                    │  ov-OpenVibe    :4096  (running)    │         │
 │                    │  ov-SmartQuant  :4097  (running)    │         │
@@ -40,15 +45,46 @@ Users cannot switch between projects without restarting the agent.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### 2.2 目标架构 (Docker) 🚀
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Agent (Go)                                   │
+│                                                                     │
+│  ┌───────────────┐    ┌───────────────────┐    ┌─────────────────┐ │
+│  │ tunnel.Client │───▶│  ProjectManager   │───▶│ Docker executor │ │
+│  │               │    │                   │    │                 │ │
+│  │ project.*     │    │ instances map     │    │ create/start    │ │
+│  │ session.*     │    │ portPool          │    │ stop/remove     │ │
+│  │ prompt        │    │ allowedPaths      │    │ health check    │ │
+│  └───────────────┘    └───────────────────┘    └─────────────────┘ │
+│                               │                                     │
+│                               ▼                                     │
+│                    ┌─────────────────────────────────────┐         │
+│                    │   OpenCode Containers (Docker)      │         │
+│                    │                                     │         │
+│                    │  ┌─────────────────────────────┐    │         │
+│                    │  │ openvibe-opencode-OpenVibe  │    │         │
+│                    │  │ :4096  volume:/project      │    │         │
+│                    │  └─────────────────────────────┘    │         │
+│                    │  ┌─────────────────────────────┐    │         │
+│                    │  │ openvibe-opencode-SmartQuant│    │         │
+│                    │  │ :4097  volume:/project      │    │         │
+│                    │  └─────────────────────────────┘    │         │
+│                    └─────────────────────────────────────┘         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
 ### Key Design Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Project Discovery | Pre-configured whitelist | Security: explicit control over allowed paths |
-| Process Lifecycle | Manual start/stop | User preference: projects persist in background for quick access |
-| Session-Project Relation | Linked by `path` field | Sessions filter by project path |
-| Process Manager | tmux | Reliable, persistent, easy to debug |
-| Port Range | 4096-4105 | 10 ports, sufficient for personal use |
+| Decision | Choice (Current) | Choice (Docker) | Rationale |
+|----------|------------------|-----------------|-----------|
+| Project Discovery | Pre-configured whitelist | Same | Security: explicit control over allowed paths |
+| Process Lifecycle | Manual start/stop | Same | User preference: projects persist for quick access |
+| Session-Project Relation | Linked by `path` field | Same | Sessions filter by project path |
+| Process Manager | tmux | **Docker** | Isolation, reproducibility, security |
+| Port Range | 4096-4105 | Same | 10 ports, sufficient for personal use |
+| Project Isolation | Shared host | **Container** | Each project runs in isolated environment |
 
 ## 3. Data Structures
 
@@ -191,7 +227,103 @@ func (m *Manager) validatePath(path string) error {
 }
 ```
 
-## 7. tmux Integration
+## 7. Docker Integration 🚀
+
+> **计划中**: 将 tmux 替换为 Docker 容器化方案
+
+### 7.1 容器命名规范
+- Pattern: `openvibe-opencode-{ProjectName}`
+- Example: `openvibe-opencode-OpenVibe`, `openvibe-opencode-SmartQuant`
+
+### 7.2 项目类型
+
+| 类型 | 说明 | Volume 映射 |
+|------|------|-------------|
+| 新项目 | 在容器中创建 | Named volume: `openvibe-{name}-data` |
+| 已有项目 | 映射宿主机目录 | Bind mount: `/host/path:/project` |
+
+### 7.3 启动命令
+
+```bash
+# 已有项目 - 映射到容器
+docker run -d \
+  --name openvibe-opencode-OpenVibe \
+  -p 4096:4096 \
+  -v /home/zcy/workspace/projects/OpenVibe:/project \
+  -w /project \
+  openvibe/opencode:latest \
+  opencode serve --port 4096
+
+# 新项目 - 使用 named volume
+docker run -d \
+  --name openvibe-opencode-NewProject \
+  -p 4097:4097 \
+  -v openvibe-NewProject-data:/project \
+  -w /project \
+  openvibe/opencode:latest \
+  opencode serve --port 4097
+```
+
+### 7.4 停止/删除命令
+
+```bash
+# 停止容器
+docker stop openvibe-opencode-OpenVibe
+
+# 删除容器 (保留 volume)
+docker rm openvibe-opencode-OpenVibe
+
+# 删除 volume (仅新项目，谨慎!)
+docker volume rm openvibe-NewProject-data
+```
+
+### 7.5 健康检查
+
+```bash
+# 检查容器状态
+docker ps -f "name=openvibe-opencode-" --format "{{.Names}}: {{.Status}}"
+
+# 检查 OpenCode 响应
+curl -sf http://localhost:4096/global/health
+```
+
+### 7.6 Dockerfile (参考)
+
+```dockerfile
+FROM ubuntu:22.04
+
+# Install opencode dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install opencode
+RUN curl -fsSL https://get.opencode.dev | bash
+
+WORKDIR /project
+
+EXPOSE 4096
+
+CMD ["opencode", "serve", "--port", "4096"]
+```
+
+### 7.7 Docker 化优势
+
+| 方面 | tmux (当前) | Docker (目标) |
+|------|-------------|---------------|
+| 隔离性 | 共享宿主机环境 | 完全隔离 |
+| 依赖管理 | 宿主机安装 | 容器内自包含 |
+| 安全性 | 进程级隔离 | 容器级隔离 + namespace |
+| 可重现性 | 依赖宿主机状态 | Dockerfile 定义 |
+| 资源限制 | 无 | CPU/Memory limits |
+| 清理 | 手动 | `docker rm` 一键清理 |
+
+---
+
+## 8. Legacy: tmux Integration (当前实现)
+
+> **注意**: 以下为当前实现，计划迁移到 Docker。
 
 ### Session Naming Convention
 - Pattern: `ov-{ProjectName}`
@@ -270,7 +402,8 @@ curl http://localhost:4097/global/health
 
 ## 11. Future Enhancements
 
-- [ ] Auto-discovery: scan directory for projects
+- [x] ~~Auto-discovery: scan directory for projects~~ (使用白名单更安全)
+- [ ] **Docker 化**: 容器隔离替代 tmux (优先级: 高)
 - [ ] Idle timeout: stop projects after N minutes of inactivity
-- [ ] Resource limits: memory/CPU per instance
+- [ ] Resource limits: memory/CPU per instance (Docker 原生支持)
 - [ ] Project templates: quick setup for new projects

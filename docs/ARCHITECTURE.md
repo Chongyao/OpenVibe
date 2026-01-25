@@ -252,7 +252,29 @@ ssh -R 4096:localhost:4096 huawei -N
 
 ## 8. 未来扩展点
 
-### 8.1 E2EE (Phase 2)
+### 8.1 Docker 化 (Phase 2.5) 🚀 **优先级: 高**
+
+将 OpenCode 实例从 tmux 进程迁移到 Docker 容器：
+
+```
+当前:
+Agent → tmux session → opencode serve (host)
+
+目标:
+Agent → Docker container → opencode serve (isolated)
+         └── 新项目: named volume
+         └── 已有项目: bind mount
+```
+
+**优势**:
+- 完全隔离的运行环境
+- 容器级安全性 (namespace, cgroups)
+- 可配置资源限制 (CPU/Memory)
+- 一键清理，无残留
+
+详见: [MULTI_PROJECT.md](./MULTI_PROJECT.md#7-docker-integration-)
+
+### 8.2 E2EE (Phase 3)
 - 增加 Go Agent 在 Arch 端
 - X25519 密钥交换
 - AES-256-GCM 加密
