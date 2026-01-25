@@ -1,5 +1,8 @@
 .sisyphus/
 
+# Logs
+*.log
+
 # Build artifacts
 hub/hub
 hub/hub-linux

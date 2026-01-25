@@ -1,92 +1,93 @@
 # AGENTS.md - OpenVibe Development Guide
 
+**Generated:** 2026-01-11 | **Commit:** e8f9460 | **Branch:** main
+
 > **Status**: Phase 2 (Go Core) | **Vision**: Mobile vibe coding terminal with E2EE + BYOS
-
-## Build Commands
-
-```bash
-# Mobile App (Next.js 16 PWA) - /app
-cd app
-npm run dev                              # Dev server at :3000
-npm run build && npm run lint            # Build + lint check
-npm run lint                             # ESLint only
-
-# Hub Server (Go 1.22+) - /hub
-cd hub
-go run ./cmd/hub                         # Run server at :8080
-go run ./cmd/hub --port 8080 \
-  --opencode http://localhost:4096 \
-  --redis localhost:6379 \
-  --agent-token secret                   # Full options
-go test -v ./... -run TestName           # Run single test
-go test -v -race ./...                   # All tests with race detection
-
-# Host Agent (Go 1.22+) - /agent
-cd agent
-go run ./cmd/agent                       # Run agent
-go run ./cmd/agent --hub ws://hub:8080/agent \
-  --opencode http://localhost:4096 \
-  --token secret                         # Full options
-
-# Integration test
-./scripts/test-phase2.sh                 # Full chain test
-```
 
 ## Architecture
 
 ```
 App (Next.js) <--WS--> Hub (Go) <--WS Tunnel--> Agent (Go) <--HTTP--> OpenCode
                          |
-                       Redis (消息缓冲)
+                       Redis (message buffer)
 ```
 
-| Component | Stack | Directory | Status |
-|-----------|-------|-----------|--------|
-| Mobile App | Next.js 16, React 19, TailwindCSS 4 | `/app` | Active |
-| Hub Server | Go 1.22, gorilla/websocket, go-redis | `/hub` | Active |
-| Host Agent | Go 1.22, gorilla/websocket | `/agent` | Active |
+| Component | Stack | Directory | Port |
+|-----------|-------|-----------|------|
+| Mobile App | Next.js 16, React 19, TailwindCSS 4 | `/app` | 3000 |
+| Hub Server | Go 1.22, gorilla/websocket, go-redis | `/hub` | 8080 |
+| Host Agent | Go 1.22, gorilla/websocket | `/agent` | - |
+
+## Build Commands
+
+```bash
+# App (Next.js PWA)
+cd app && npm run dev           # Dev server :3000
+cd app && npm run build && npm run lint  # Build + lint
+
+# Hub (Go)
+cd hub && go run ./cmd/hub      # Server :8080
+cd hub && go test -v -race ./...  # Tests with race detection
+
+# Agent (Go)
+cd agent && go run ./cmd/agent  # Single-project mode
+cd agent && go run ./cmd/agent --projects /path1,/path2  # Multi-project
+
+# Integration
+./scripts/test-phase2.sh        # Full chain test
+```
+
+## Where to Look
+
+| Task | Location | Notes |
+|------|----------|-------|
+| WebSocket client connection | `app/src/hooks/useWebSocket.ts` | Mosh-style sync, auto-reconnect |
+| Message rendering | `app/src/components/MessageBubble.tsx` | Markdown + syntax highlight |
+| Hub WebSocket server | `hub/internal/server/server.go` | Client connection handler |
+| Agent tunnel manager | `hub/internal/tunnel/manager.go` | Agent registration, request routing |
+| OpenCode HTTP client | `agent/internal/opencode/client.go` | SSE streaming to Hub |
+| Multi-project routing | `agent/internal/project/manager.go` | Port pool, tmux sessions |
+| Redis message buffer | `hub/internal/buffer/redis.go` | Mosh-style sync persistence |
 
 ## Code Style
 
 ### TypeScript/React
 
 ```typescript
-// 'use client' for client components, file extension .tsx for JSX
-'use client';
+'use client';  // Required for client components
 
-// Imports: external -> internal alias -> relative (alphabetized)
+// Import order: external -> @/ alias -> relative
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import type { Message, ServerMessage } from '@/types';
+import type { Message } from '@/types';
 import { MessageBubble } from './MessageBubble';
 
-// Named exports, PascalCase components, camelCase functions
+// Named exports, PascalCase components
 export function TerminalView({ sessionId }: Props) {
   if (!sessionId) return null;  // Early returns first
   return <div>...</div>;
 }
 
-// Use memo for performance-critical components
+// memo() for performance-critical components
 export const MessageBubble = memo(function MessageBubble({ message }: Props) {
   const parsedContent = useMemo(() => parseContent(message.content), [message.content]);
   return <div>{parsedContent}</div>;
 });
 
-// Types: interface for objects, type for unions/literals
-interface Message { id: string; content: string; msgId?: number; }
+// interface for objects, type for unions/literals
+interface Message { id: string; content: string; }
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 ```
 
 ### Go
 
 ```go
-// Imports: stdlib -> external -> internal (goimports)
+// Import order: stdlib -> external -> internal (goimports)
 import (
     "context"
     "fmt"
     
     "github.com/gorilla/websocket"
-    "github.com/redis/go-redis/v9"
     
     "github.com/openvibe/hub/internal/buffer"
 )
@@ -102,43 +103,13 @@ func (b *RedisBuffer) Push(ctx context.Context, sessionID string, msg Message) (
 
 // Constructor pattern: New* returns pointer
 func NewManager(cfg *Config) *Manager {
-    return &Manager{
-        config: cfg,
-        agents: make(map[string]*Agent),
-    }
-}
-```
-
-## Security (Phase 3 Target)
-
-**Target Crypto**: X25519 key exchange + AES-256-GCM + HKDF-SHA256
-
-### Rules (NEVER VIOLATE)
-1. **Never log plaintext** - encrypt before logging sensitive data
-2. **Constant-time comparison** - `subtle.ConstantTimeCompare` for tokens
-3. **Validate before process** - check message structure first
-
-```go
-// Good: constant-time token comparison
-if subtle.ConstantTimeCompare([]byte(payload.Token), []byte(cfg.AgentToken)) != 1 {
-    return ErrUnauthorized
-}
-```
-
-## UI/UX - Cyberpunk Console
-
-```css
-:root {
-  --bg-primary: #09090b;      /* Deep space gray */
-  --bg-secondary: #18181b;    /* Card background */
-  --accent-primary: #00ff9d;  /* Neon green */
-  --accent-error: #ff0055;    /* Cyber red */
+    return &Manager{config: cfg, agents: make(map[string]*Agent)}
 }
 ```
 
 ## Key Protocols
 
-### Mosh-Style Sync (断点续传)
+### Mosh-Style Sync
 ```typescript
 // Client tracks lastAckId, requests sync on reconnect
 { type: 'sync', payload: { sessionId, lastAckId: 1000 } }
@@ -156,45 +127,20 @@ if subtle.ConstantTimeCompare([]byte(payload.Token), []byte(cfg.AgentToken)) != 
 { type: 'agent.stream', id: 'req-1', payload: { text: '...' } }
 ```
 
-## File Structure
+## Security (Phase 3 Target)
 
-```
-app/src/
-  app/           # Next.js App Router pages
-  components/    # Reusable UI components
-  hooks/         # Custom React hooks (useWebSocket, useSettings)
-  types/         # TypeScript interfaces
+**Target Crypto**: X25519 + AES-256-GCM + HKDF-SHA256
 
-hub/
-  cmd/hub/       # Entry point
-  internal/
-    buffer/      # Redis message buffering
-    config/      # Configuration
-    proxy/       # OpenCode HTTP proxy (fallback)
-    server/      # WebSocket server
-    tunnel/      # Agent tunnel manager
+### Rules (NEVER VIOLATE)
+1. **Never log plaintext** - encrypt sensitive data before logging
+2. **Constant-time comparison** - `subtle.ConstantTimeCompare` for tokens
+3. **Validate before process** - check message structure first
 
-agent/
-  cmd/agent/     # Entry point
-  internal/
-    opencode/    # OpenCode HTTP client
-    tunnel/      # Tunnel client
-```
-
-## Git Conventions
-
-- Branches: `feat/`, `fix/`, `refactor/`, `docs/`
-- Commits: Conventional (`feat:`, `fix:`, `chore:`, `refactor:`)
-- PRs: <400 lines changed, no force push to `main`
-
-## Testing
-
-```bash
-# Hub integration test
-./scripts/test-phase2.sh
-
-# With Redis
-REDIS_ADDR=localhost:6379 ./scripts/test-phase2.sh
+```go
+// Good: constant-time token comparison
+if subtle.ConstantTimeCompare([]byte(payload.Token), []byte(cfg.AgentToken)) != 1 {
+    return ErrUnauthorized
+}
 ```
 
 ## Environment Variables
@@ -203,119 +149,58 @@ REDIS_ADDR=localhost:6379 ./scripts/test-phase2.sh
 |----------|-------------|---------|
 | `OPENVIBE_TOKEN` | Client auth token | (none) |
 | `OPENVIBE_AGENT_TOKEN` | Agent auth token | (none) |
+| `OPENVIBE_PROJECTS` | Comma-separated project paths | (none) |
 | `REDIS_PASSWORD` | Redis password | (none) |
 | `NEXT_PUBLIC_WS_URL` | WebSocket URL | auto-detect |
 
 ## Known Bugs & Solutions
 
-### 1. Stale Closure in WebSocket onConnect Callback
-**Symptom**: Auto session creation fails on first load, but manual "New Chat" works.
-
-**Root Cause**: React state is stale inside `onConnect` callback. When `onConnect` fires, `state` is still `'disconnected'` due to closure, so `if (state !== 'connected')` check fails.
-
-**Solution**: Don't rely on React state inside WebSocket callbacks. Use refs or call `send()` directly since `onConnect` only fires when connected.
+### 1. Stale Closure in WebSocket onConnect
+**Symptom**: Auto session creation fails on first load.
+**Cause**: React state stale inside `onConnect` callback.
+**Fix**: Use refs, don't check state in `onConnect` - it only fires when connected.
 
 ```typescript
 // BAD: state is stale
-onConnect: () => {
-  if (state === 'connected') handleNewSession(); // state is 'disconnected' here!
-}
+onConnect: () => { if (state === 'connected') handleNewSession(); }
 
-// GOOD: onConnect only fires when connected, no state check needed
-onConnect: () => {
-  if (!isCreatingSessionRef.current) {
-    isCreatingSessionRef.current = true;
-    send({ type: 'session.create', ... });
-  }
-}
+// GOOD: onConnect implies connected
+onConnect: () => { if (!isCreatingRef.current) { isCreatingRef.current = true; send(...); } }
 ```
 
-### 2. Browser Cache Serving Stale JavaScript
-**Symptom**: Changes deployed but browser still runs old code.
+### 2. Browser Cache Serving Stale JS
+**Symptom**: Changes deployed but browser runs old code.
+**Fix**: Hub sets cache headers - HTML: `no-cache`, `/_next/static/`: `immutable`.
 
-**Root Cause**: Hub serves static files without `Cache-Control` headers.
+### 3. Messages Sent to Wrong OpenCode Instance (RESOLVED)
+**Symptom**: User selects Project A, gets response from Project B.
+**Cause**: `prompt` request was missing `projectPath`, Agent used default URL.
+**Fix**: Commit `e8f9460` - Frontend now passes `projectPath` in prompt request, Hub forwards to Agent, Agent routes to correct OpenCode instance.
+**Status**: ✅ FIXED - Full chain: Frontend → Hub → Agent → OpenCode all pass projectPath correctly.
 
-**Solution**: Add cache headers in Hub's static file handler:
-- HTML files: `Cache-Control: no-cache, no-store, must-revalidate`
-- Static assets (`/_next/static/`): `Cache-Control: public, max-age=31536000, immutable`
+### 4. sendRef May Be Null
+**Symptom**: Clicking Start does nothing.
+**Cause**: `sendRef.current` set in useEffect after first render.
+**Fix**: Added null check with console.warn.
 
-### 3. Agent Disconnection Not Obvious to User
-**Symptom**: User sees "Connecting..." forever, no error message.
+### 5. Session Directory Not Used for Routing
+**Symptom**: Session created with correct directory, subsequent messages go elsewhere.
+**Cause**: OpenCode API doesn't persist `directory` field.
+**Fix**: Track session->projectPath mapping in Agent or Hub.
 
-**Root Cause**: Hub returns generic error when no agent is connected.
+## Git Conventions
 
-**Solution**: Check agent status first and return friendly error message:
-```go
-if agent, ok := tunnelMgr.GetAnyAgent(); !ok {
-    sendError("No agent connected. Please start the OpenVibe agent on your development server.")
+- Branches: `feat/`, `fix/`, `refactor/`, `docs/`
+- Commits: Conventional (`feat:`, `fix:`, `chore:`, `refactor:`)
+- PRs: <400 lines, no force push to `main`
+
+## UI Theme - Cyberpunk Console
+
+```css
+:root {
+  --bg-primary: #09090b;      /* Deep space gray */
+  --bg-secondary: #18181b;    /* Card background */
+  --accent-primary: #00ff9d;  /* Neon green */
+  --accent-error: #ff0055;    /* Cyber red */
 }
 ```
-
-### 4. WebSocket Close Code 1005 (No Status)
-**Symptom**: Hub logs show `websocket: close 1005 (no status)` immediately after client connects.
-
-**Possible Causes**:
-1. Client JavaScript error before WebSocket fully initializes
-2. Browser security policy blocking WebSocket
-3. Network/firewall issues
-4. Stale cached JavaScript (see bug #2)
-
-**Debug Steps**:
-1. Check browser console for JS errors
-2. Verify `curl http://hub:8080/agents` shows connected agent
-3. Test with Node.js WebSocket client to isolate browser issues
-4. Hard refresh browser (Ctrl+Shift+R) to clear cache
-
-### 5. 🔴 Messages Sent to Wrong OpenCode Instance (CRITICAL - UNRESOLVED)
-**Symptom**: User selects Game2048, creates session, sends message, but gets response about SmartQuant.
-
-**Root Cause**: The `prompt` request doesn't carry `projectPath`, so Agent uses default OpenCode URL.
-
-**Problem Chain**:
-1. Frontend: `handleSend` doesn't include project path in payload
-2. Hub: `handlePrompt` doesn't extract/forward project path
-3. Agent: `handleOpenCodeRequest` uses default URL when `req.ProjectPath` is empty
-
-**Key Code Location**: `agent/internal/tunnel/client.go` lines 259-278
-```go
-func (c *Client) handleOpenCodeRequest(..., req RequestPayload) {
-    if c.projectMgr != nil && req.ProjectPath != "" {  // ← ProjectPath is empty!
-        url, err := c.projectMgr.GetOpenCodeURL(req.ProjectPath)
-        // ...
-    }
-    // Falls through to default URL
-}
-```
-
-**Suggested Fix Options**:
-1. **Option A**: Frontend passes `projectPath` in every `prompt` request
-2. **Option B**: Hub tracks session→project mapping and adds projectPath
-3. **Option C**: Agent maintains session→project mapping from session.create
-
-**Status**: Partially fixed for `session.create`, but `prompt` still broken.
-
-### 6. sendRef May Be Null When Calling useProjects
-**Symptom**: Clicking Start button does nothing, no error shown.
-
-**Root Cause**: `sendRef.current` is set in `useEffect` which runs after first render. If user clicks before effect runs, send is null.
-
-**Solution Applied**: Added null check with console.warn:
-```tsx
-send: (msg) => {
-  const result = sendRef.current?.({ ...msg, payload: msg.payload } as ClientMessage);
-  if (result === undefined) {
-    console.warn('[useProjects] WebSocket not ready, message not sent:', msg.type);
-  }
-}
-```
-
-### 7. Session Directory Not Used for Routing
-**Symptom**: Session created with correct directory, but subsequent messages go to wrong project.
-
-**Root Cause**: OpenCode API doesn't persist or return `directory` field. Session's directory is only known at creation time, not stored.
-
-**Impact**: 
-- `session.create` with directory works
-- Subsequent `prompt` on that session doesn't know which project it belongs to
-
-**Suggested Fix**: Track session→projectPath mapping in Agent or Hub.
