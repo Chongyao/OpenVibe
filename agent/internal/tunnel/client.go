@@ -138,7 +138,7 @@ func (c *Client) connectAndRun(ctx context.Context) error {
 	c.reconnectDelay = time.Second
 
 	if c.projectMgr != nil {
-		c.projectMgr.SyncWithTmux(ctx)
+		c.projectMgr.SyncWithDocker(ctx)
 	}
 
 	return c.readLoop(ctx)
@@ -260,11 +260,14 @@ func (c *Client) handleOpenCodeRequest(ctx context.Context, requestID string, re
 	var baseURL string
 
 	if c.projectMgr != nil && req.ProjectPath != "" {
-		url, err := c.projectMgr.GetOpenCodeURL(req.ProjectPath)
+		log.Printf("[Agent] handleOpenCodeRequest: action=%s, projectPath=%s", req.Action, req.ProjectPath)
+		url, err := c.projectMgr.GetOrStartOpenCodeURL(ctx, req.ProjectPath)
 		if err != nil {
+			log.Printf("[Agent] GetOrStartOpenCodeURL failed: %v", err)
 			c.sendError(requestID, err.Error())
 			return
 		}
+		log.Printf("[Agent] Using OpenCode URL: %s", url)
 		baseURL = url
 	}
 

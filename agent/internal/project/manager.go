@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	TmuxSessionPrefix    = "ov-"
 	DefaultHealthTimeout = 30 * time.Second
 )
 
@@ -18,13 +17,14 @@ type Config struct {
 	PortMin      int
 	PortMax      int
 	MaxInstances int
+	DockerImage  string
 }
 
 type Manager struct {
 	config    *Config
 	instances map[string]*Instance
 	portPool  *PortPool
-	tmux      *TmuxExecutor
+	docker    *DockerExecutor
 	mu        sync.RWMutex
 }
 
@@ -43,16 +43,16 @@ func NewManager(cfg *Config) *Manager {
 		config:    cfg,
 		instances: make(map[string]*Instance),
 		portPool:  NewPortPool(cfg.PortMin, cfg.PortMax),
-		tmux:      NewTmuxExecutor(),
+		docker:    NewDockerExecutor(cfg.DockerImage),
 	}
 
 	for _, path := range cfg.AllowedPaths {
 		name := filepath.Base(path)
 		m.instances[path] = &Instance{
-			Path:        path,
-			Name:        name,
-			TmuxSession: TmuxSessionPrefix + name,
-			Status:      StatusStopped,
+			Path:          path,
+			Name:          name,
+			ContainerName: DockerContainerPrefix + name,
+			Status:        StatusStopped,
 		}
 	}
 
@@ -110,7 +110,7 @@ func (m *Manager) Start(ctx context.Context, path string) (*Instance, error) {
 		return nil, fmt.Errorf("max instances reached (%d), stop another project first", m.config.MaxInstances)
 	}
 
-	port, err := m.portPool.Acquire(path)
+	port, err := m.portPool.AcquireAvailable(ctx, path, m.docker)
 	if err != nil {
 		return nil, fmt.Errorf("failed to acquire port: %w", err)
 	}
@@ -119,7 +119,7 @@ func (m *Manager) Start(ctx context.Context, path string) (*Instance, error) {
 	inst.Port = port
 	inst.Error = ""
 
-	if err := m.tmux.StartSession(ctx, inst.TmuxSession, path, port); err != nil {
+	if err := m.docker.StartContainer(ctx, inst.ContainerName, path, port); err != nil {
 		inst.Status = StatusError
 		inst.Error = err.Error()
 		m.portPool.Release(port)
@@ -127,9 +127,11 @@ func (m *Manager) Start(ctx context.Context, path string) (*Instance, error) {
 		return &copy, err
 	}
 
-	if err := m.tmux.WaitForHealth(ctx, port, DefaultHealthTimeout); err != nil {
+	if err := m.docker.WaitForHealth(ctx, port, DefaultHealthTimeout); err != nil {
 		inst.Status = StatusError
 		inst.Error = err.Error()
+		m.docker.StopContainer(ctx, inst.ContainerName)
+		m.portPool.Release(port)
 		copy := *inst
 		return &copy, err
 	}
@@ -153,7 +155,7 @@ func (m *Manager) Stop(ctx context.Context, path string) error {
 		return nil
 	}
 
-	if err := m.tmux.StopSession(ctx, inst.TmuxSession); err != nil {
+	if err := m.docker.StopContainer(ctx, inst.ContainerName); err != nil {
 		return err
 	}
 
@@ -185,13 +187,35 @@ func (m *Manager) GetOpenCodeURL(path string) (string, error) {
 	return inst.OpenCodeURL(), nil
 }
 
+// GetOrStartOpenCodeURL returns the OpenCode URL for a project, starting it if not running.
+// This is the preferred method for handling requests that need auto-start behavior.
+func (m *Manager) GetOrStartOpenCodeURL(ctx context.Context, path string) (string, error) {
+	// First check if already running (read lock only)
+	m.mu.RLock()
+	inst, ok := m.instances[path]
+	if ok && inst.Status == StatusRunning {
+		url := inst.OpenCodeURL()
+		m.mu.RUnlock()
+		return url, nil
+	}
+	m.mu.RUnlock()
+
+	// Not running, need to start (this acquires write lock internally)
+	startedInst, err := m.Start(ctx, path)
+	if err != nil {
+		return "", fmt.Errorf("failed to start project: %w", err)
+	}
+
+	return startedInst.OpenCodeURL(), nil
+}
+
 func (m *Manager) RefreshStatus(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, inst := range m.instances {
 		if inst.Status == StatusRunning || inst.Status == StatusStarting {
-			if !m.tmux.SessionExists(ctx, inst.TmuxSession) {
+			if !m.docker.ContainerRunning(ctx, inst.ContainerName) {
 				if inst.Port > 0 {
 					m.portPool.Release(inst.Port)
 				}
@@ -213,24 +237,6 @@ func (m *Manager) validatePath(path string) error {
 	return fmt.Errorf("path not in whitelist: %s", path)
 }
 
-func (m *Manager) SyncWithTmux(ctx context.Context) error {
-	sessions, err := m.tmux.ListSessions(ctx)
-	if err != nil {
-		return err
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, session := range sessions {
-		for _, inst := range m.instances {
-			if inst.TmuxSession == session {
-				inst.Status = StatusRunning
-				inst.StartedAt = time.Now()
-				break
-			}
-		}
-	}
-
+func (m *Manager) SyncWithDocker(ctx context.Context) error {
 	return nil
 }

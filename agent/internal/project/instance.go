@@ -12,13 +12,13 @@ const (
 )
 
 type Instance struct {
-	Path        string    `json:"path"`
-	Name        string    `json:"name"`
-	Port        int       `json:"port"`
-	TmuxSession string    `json:"tmuxSession"`
-	Status      Status    `json:"status"`
-	Error       string    `json:"error,omitempty"`
-	StartedAt   time.Time `json:"startedAt,omitempty"`
+	Path          string    `json:"path"`
+	Name          string    `json:"name"`
+	Port          int       `json:"port"`
+	ContainerName string    `json:"containerName"`
+	Status        Status    `json:"status"`
+	Error         string    `json:"error,omitempty"`
+	StartedAt     time.Time `json:"startedAt,omitempty"`
 }
 
 func (i *Instance) IsRunning() bool {

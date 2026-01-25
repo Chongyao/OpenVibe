@@ -1,6 +1,7 @@
 package project
 
 import (
+	"context"
 	"errors"
 	"sync"
 )
@@ -8,7 +9,13 @@ import (
 var (
 	ErrNoAvailablePort = errors.New("no available port in pool")
 	ErrPortNotInUse    = errors.New("port not in use")
+	ErrAllPortsInUse   = errors.New("all ports in range are occupied by other services")
 )
+
+// PortChecker is an interface for checking if a port is in use
+type PortChecker interface {
+	IsPortInUse(ctx context.Context, port int) bool
+}
 
 type PortPool struct {
 	minPort       int
@@ -45,6 +52,32 @@ func (p *PortPool) Acquire(projectPath string) (int, error) {
 	return 0, ErrNoAvailablePort
 }
 
+func (p *PortPool) AcquireAvailable(ctx context.Context, projectPath string, checker PortChecker) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for port, path := range p.portToProject {
+		if path == projectPath {
+			return port, nil
+		}
+	}
+
+	for port := p.minPort; port <= p.maxPort; port++ {
+		if _, ok := p.portToProject[port]; ok {
+			continue
+		}
+
+		if checker.IsPortInUse(ctx, port) {
+			continue
+		}
+
+		p.portToProject[port] = projectPath
+		return port, nil
+	}
+
+	return 0, ErrAllPortsInUse
+}
+
 func (p *PortPool) Release(port int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -79,4 +112,10 @@ func (p *PortPool) Available() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return (p.maxPort - p.minPort + 1) - len(p.portToProject)
+}
+
+func (p *PortPool) MarkInUse(port int, projectPath string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.portToProject[port] = projectPath
 }
