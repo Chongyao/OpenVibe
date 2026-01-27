@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -89,33 +90,50 @@ func (c *Client) HandleRequestWithURL(ctx context.Context, baseURL, sessionID, a
 }
 
 func (c *Client) handleSessionCreate(ctx context.Context, baseURL string, data json.RawMessage, ch chan<- []byte) {
+	log.Printf("[OpenCode] handleSessionCreate called, baseURL=%s", baseURL)
 	var createData SessionCreateData
 	json.Unmarshal(data, &createData)
 
-	body, _ := json.Marshal(map[string]string{"title": createData.Title})
+	reqBody := map[string]string{"title": createData.Title}
+	if createData.Directory != "" {
+		reqBody["directory"] = createData.Directory
+	}
+	body, _ := json.Marshal(reqBody)
+	log.Printf("[OpenCode] Creating session with body: %s", string(body))
+
 	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/session", bytes.NewReader(body))
 	if err != nil {
+		log.Printf("[OpenCode] Request creation failed: %v", err)
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		ch <- errPayload
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	log.Printf("[OpenCode] Sending request to %s", baseURL+"/session")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		log.Printf("[OpenCode] HTTP request failed: %v", err)
+		errPayload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		ch <- errPayload
 		return
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("[OpenCode] Got response: %s", string(respBody))
 
 	if createData.Directory != "" {
 		var respData map[string]interface{}
 		if err := json.Unmarshal(respBody, &respData); err == nil {
 			respData["directory"] = createData.Directory
 			modifiedResp, _ := json.Marshal(respData)
+			log.Printf("[OpenCode] Sending modified response to channel")
 			ch <- modifiedResp
 			return
 		}
 	}
+	log.Printf("[OpenCode] Sending response to channel")
 	ch <- respBody
 }
 

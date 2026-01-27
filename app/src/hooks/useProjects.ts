@@ -38,6 +38,10 @@ export function useProjects({ send }: UseProjectsOptions) {
   }, [send]);
 
   const startProject = useCallback((path: string) => {
+    setProjects(prev => prev.map(p => 
+      p.path === path ? { ...p, status: 'starting' as const } : p
+    ));
+    
     const id = generateId();
     send({
       type: 'project.start',
@@ -51,6 +55,10 @@ export function useProjects({ send }: UseProjectsOptions) {
   }, [send]);
 
   const stopProject = useCallback((path: string) => {
+    setProjects(prev => prev.map(p => 
+      p.path === path ? { ...p, status: 'starting' as const } : p
+    ));
+    
     const id = generateId();
     send({
       type: 'project.stop',
@@ -109,6 +117,11 @@ export function useProjects({ send }: UseProjectsOptions) {
     pendingRequests.current.delete(msgId);
     setLoading(false);
     setError(errorMsg);
+    
+    setProjects(prev => prev.map(p => 
+      p.status === 'starting' ? { ...p, status: 'stopped' as const } : p
+    ));
+    
     pending.reject(new Error(errorMsg));
     return true;
   }, []);

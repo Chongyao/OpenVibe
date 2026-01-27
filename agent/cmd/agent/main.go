@@ -24,6 +24,7 @@ func main() {
 	portMin := flag.Int("port-min", 4096, "Minimum port for OpenCode instances")
 	portMax := flag.Int("port-max", 4105, "Maximum port for OpenCode instances")
 	maxInstances := flag.Int("max-instances", 5, "Maximum concurrent OpenCode instances")
+	dockerImage := flag.String("docker-image", "openvibe/opencode:latest", "Docker image for OpenCode containers")
 
 	flag.Parse()
 
@@ -62,6 +63,7 @@ func main() {
 			PortMin:      *portMin,
 			PortMax:      *portMax,
 			MaxInstances: *maxInstances,
+			DockerImage:  *dockerImage,
 		})
 	} else {
 		log.Printf("  Single-project mode: %s", *opencodeURL)
